@@ -1,5 +1,7 @@
 // Drone asset facts (PRD §2.1, §4.1) and rig tunables (PRD §4.3).
 
+import { BATTERY, MOTOR } from './motor';
+
 const DEG = Math.PI / 180;
 
 type Vec3 = [number, number, number];
@@ -17,8 +19,8 @@ export const DRONE = {
    * are the canister's straps; they are toggled with the payload.
    */
   payloadStrapBelowY: 0.03,
-  /** No-load max RPM (1300 KV × 25.2 V). Scales vibration; Task 4's motor model will own this. */
-  rpmMax: 32760,
+  /** No-load max RPM at a full pack: KV × 4.2 V × cells (32,760). Scales vibration and air noise. */
+  rpmMax: MOTOR.kv * 4.2 * BATTERY.cells,
 } as const;
 
 /**
@@ -61,9 +63,11 @@ export const PROP_DISC = {
   streakSlowdown: 0.2,
   /** Sheen band: lower roughness at this normalized radius. */
   sheenCenter: 0.62,
-  sheenWidth: 0.18,
-  roughness: 0.55,
-  sheenRoughness: 0.2,
+  sheenWidth: 0.32,
+  roughness: 0.62,
+  sheenRoughness: 0.42,
+  /** Environment reflection scale: a flat disc at grazing angles mirrors the softboxes (Fresnel → 1). */
+  envIntensity: 0.45,
   /** Used if the prop color can't be sampled from the texture. */
   fallbackColor: 0x1a1b1d,
 };
