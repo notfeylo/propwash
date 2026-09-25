@@ -29,3 +29,19 @@ Task 1 needs visual proof that the pipeline output loads. `src/app/App.ts` is a 
 ## 2026-09-24 · Deployed at propwash-sim.vercel.app
 
 `propwash.vercel.app` belongs to another Vercel account, so the project uses the §3.3 fallback, `propwash-sim.vercel.app`. The Vercel project is connected to the GitHub repo, so PRs get preview deploys.
+
+## 2026-09-24 · Soft shadows use PCF + radius, not PCFSoftShadowMap
+
+three r186's WebGPURenderer removed `PCFSoftShadowMap` (it logs a warning and falls back). `PCFShadowMap` now samples a rotated Vogel disk scaled by `shadow.radius`, and TRAA resolves the rotation noise, so `LIGHTS.key.shadowRadius` sets the softness.
+
+## 2026-09-24 · Floor fades into the backdrop by distance from the pad
+
+A floor edge dithered with alpha hash showed as a noisy band at the horizon. Instead the scene fog blends the floor into the exact background color behind each pixel (the gradient, or the blurred HDRI sampled along the view ray), with a factor based on distance from the pad (`ENVIRONMENT.horizonFog`), not view depth. Nothing within 1.2 m of the pad is fogged, so the drone is never affected.
+
+## 2026-09-24 · 1k HDRI
+
+§4.2 allows 1k or 2k. The 2k file is 6.3 MB, which with the 2.7 MB drone would break the 8 MB initial-download budget. The 1k file (1.6 MB) is used for IBL and the blurred backdrop, where the extra resolution isn't visible.
+
+## 2026-09-24 · Auto quality can't see headroom above the refresh rate
+
+Frame time is measured from requestAnimationFrame, which is vsync-capped. On a 60 Hz display a fast GPU and a just-keeping-up GPU both measure ~16.7 ms and get High. Ultra is only auto-picked when frames come faster than 9 ms (high-refresh displays). Settings can override it (Task 8), and `?quality=` does today.

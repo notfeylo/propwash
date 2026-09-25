@@ -20,4 +20,10 @@ The public build ships **procedurally synthesized** motor audio and beeps only; 
 
 ## Environment maps
 
-None yet. HDRIs will come from [Poly Haven](https://polyhaven.com/) under CC0 and will be listed here per file.
+| File                                 | Source                                                                                     | License                                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `public/hdri/studio_small_09_1k.hdr` | [Studio Small 09](https://polyhaven.com/a/studio_small_09) by Sergej Majboroda, Poly Haven | [CC0](https://creativecommons.org/publicdomain/zero/1.0/) |
+
+## Bench set
+
+The concrete floor and landing pad textures are generated procedurally at runtime (`src/render/proceduralTextures.ts`). They are original to this project.
