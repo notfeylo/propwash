@@ -1,5 +1,6 @@
 import type { App } from './App';
 import type { CameraMode, FeedStyle } from '../config/cameras';
+import type { ControlState } from '../input/types';
 import type { BackgroundMode, QualityPreset } from '../config/render';
 import type { FcLedMode, VtxLedMode } from '../drone/LEDs';
 import type { PropWeights } from '../drone/propBlend';
@@ -99,6 +100,10 @@ export interface DebugHandle {
   setJello(enabled: boolean): void;
   setWhipPan(enabled: boolean): void;
   camera(): CameraInfo;
+  /** Last frame's normalized input (PRD §4.7) and the connected pads. */
+  input(): { state: ControlState | null; pads: { index: number; kind: string; name: string; calibrated: boolean }[] };
+  openCalibration(): void;
+  setUiHidden(hidden: boolean): void;
   /** World point → CSS pixel in the canvas, through the active view (before the barrel). */
   project(world: Vec3): [number, number];
 }
@@ -215,6 +220,17 @@ export function exposeDebug(app: App): void {
         };
       }),
     groundOffset: () => drone.groundOffset,
+    input: () => ({
+      state: app.controlState,
+      pads: [...app.input.pads].map(([index, p]) => ({
+        index,
+        kind: 'calibration' in p ? 'radio' : 'gamepad',
+        name: p.name,
+        calibrated: 'calibration' in p ? !!p.calibration : true,
+      })),
+    }),
+    openCalibration: () => app.calibrateRadio(),
+    setUiHidden: (h) => app.setUiHidden(h),
     setCamera: (mode, instant) => app.cameras.setMode(mode, instant),
     setFeed: (feed) => app.cameras.setFeed(feed),
     setUptilt: (deg) => app.cameras.setUptilt(deg),

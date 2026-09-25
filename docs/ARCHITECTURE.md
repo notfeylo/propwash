@@ -65,10 +65,21 @@ mount_hdCam  ──▶ HD camera ─────┘    (active view,      (scree
 
 FPV and HD cameras hang off the mounts on the vibrating body, so the feed shakes with the frame. `C` cycles Orbit → FPV → HD with a 150 ms dip through black; `V` switches the FPV feed between analog (4:3) and digital (16:9). The OSD (`src/ui/OSD.ts`) is a canvas over the video box on the feed's character grid (30×16 analog, 53×20 digital); the HD view shows only REC and a timer. The audio listener follows the render camera, with the close-mic mix in FPV/HD.
 
+## Input (`src/input`, PRD §4.7)
+
+```
+KeyboardInput ───────────┐
+GamepadInput (standard) ─┼─ DeviceFrame each ─▶ InputManager ─▶ ControlState ─▶ App: power, cameras, UI
+RadioInput (calibrated) ─┘                       (active device = last used)     └▶ Haptics (active pad)
+navigator.getGamepads(): mapping 'standard' → GamepadInput, anything else → RadioInput
+```
+
+`GamepadInput` maps the §4.7 PS4 bindings: R2 throttle (or Mode 2 stick with optional hold), R1 arm toggle, L1+R1 kill, Options held 0.6 s for the battery. `RadioCalibrator` is the pure wizard logic (rest pose, then per channel the axis that travelled furthest, its endpoints and direction, then the arm switch), and `CalibrationWizard` is its UI. `InputVisualizer` shows the active device and live Mode 2 gimbals.
+
 ## Verification
 
 - `pnpm test`: unit tests (blend continuity, aliasing, vibration bounds, antenna stability, quality picker, motor dynamics, power states, battery, audio mapping, loop seam).
-- `pnpm test:e2e`: smoke test, rig checks, and the power flow through the real keyboard.
+- `pnpm test:e2e`: smoke test, rig checks, the power flow through the real keyboard, camera cycling, and a simulated DualShock 4 (plug, arm, throttle, kill, rumble).
 - `pnpm verify:visual [url]`: renders the §4.9 screenshots into `docs/verification/`, including every camera view. Set `CHANNEL=chrome` to use an installed Chrome with WebGPU.
 - `pnpm verify:audio [url] [--clips]`: renders bench sessions offline and measures the §4.9 audio criteria into `docs/verification/audio/`. Runs in CI on the procedural path.
 - `window.__propwash` (see `src/app/debug.ts`) drives all of the above: freeze/step the sim clock, set RPM or rotor angles, plug/arm/throttle, toggle arrows, payload and LEDs, render audio offline, and project world points to pixels.

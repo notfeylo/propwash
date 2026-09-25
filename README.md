@@ -22,7 +22,7 @@ Click the page (or press any key) to start audio; browsers block sound until you
 
 ## Controls
 
-Keyboard controls for the battery, arming, throttle, kill, beacon, and payload work now. The rest land during Phase 1.
+Keyboard, PS4 / PS5 controllers (Chrome's standard mapping) and USB RC radios all work, and you can switch between them at any time: throttle and sticks follow whichever device you touched last. The motor test panel lands with the settings UI.
 
 | Action                    | Keyboard                         | Gamepad (PS4 / PS5) |
 | ------------------------- | -------------------------------- | ------------------- |
@@ -37,7 +37,7 @@ Keyboard controls for the battery, arming, throttle, kill, beacon, and payload w
 | Hide UI / fullscreen      | H / F                            | —                   |
 | Orbit, zoom, pan          | Mouse drag, wheel, right-drag    | —                   |
 
-USB RC radios (EdgeTX / OpenTX) are supported through a calibration wizard.
+USB RC radios (EdgeTX / OpenTX in joystick mode) show up as non-standard gamepads. Press **Calibrate radio** in the input widget (bottom right) and the wizard detects each stick's axis, endpoints and direction, plus your arm switch. The calibration is saved in the browser. Controllers rumble in Chrome: the weak motor follows motor load, and the ESC tones and arming give short pulses.
 
 ## Roadmap
 

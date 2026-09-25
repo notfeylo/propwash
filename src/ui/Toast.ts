@@ -20,14 +20,20 @@ export type InputHintDevice = 'keyboard' | 'gamepad' | 'radio';
 
 /** Why arming was refused, and what to do about it, per input device. */
 export function armBlockedMessage(reason: ArmBlocker, device: InputHintDevice = 'keyboard'): string {
-  const k = device === 'keyboard';
   switch (reason) {
     case 'NO POWER':
-      return `Battery unplugged: press <b>${k ? 'P' : 'Options (hold)'}</b> to plug in`;
+      return `Battery unplugged: ${device === 'gamepad' ? 'hold <b>Options</b>' : 'press <b>P</b>'} to plug in`;
     case 'BOOTING':
       return 'ESCs starting: wait for the two ready tones, then arm';
-    case 'THROTTLE':
-      return `Arming blocked: throttle above 5%. ${k ? 'Press <b>0</b> or hold <b>S</b>' : 'Lower the throttle'}, then arm`;
+    case 'THROTTLE': {
+      const fix =
+        device === 'keyboard'
+          ? 'Press <b>0</b> or hold <b>S</b>'
+          : device === 'gamepad'
+            ? 'Release <b>R2</b>'
+            : 'Lower the throttle';
+      return `Arming blocked: throttle above 5%. ${fix}, then arm${device === 'radio' ? ' (flip the switch off and on)' : ''}`;
+    }
     case 'FAILSAFE':
       return 'Arming blocked: failsafe (no radio signal)';
   }

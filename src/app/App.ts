@@ -12,7 +12,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CameraDirector } from '../cameras/CameraDirector';
 import type { AudioFrame, Vec3 } from '../audio/AudioEngine';
 import { LiveAudio } from '../audio/LiveAudio';
-import { LEDS, PROP_BLEND } from '../config/drone';
+import { DRONE, LEDS, PROP_BLEND } from '../config/drone';
 import { QUALITY, RENDER, type QualityPreset } from '../config/render';
 import { DroneModel } from '../drone/DroneModel';
 import { createBench } from '../render/bench';
@@ -21,11 +21,15 @@ import { aimKeyLight, createKeyLight, setShadowMapSize } from '../render/lightin
 import { LookUniforms } from '../render/cameraLook';
 import { PostPipeline } from '../render/pipeline';
 import { QualityController } from '../render/quality';
-import { KeyboardInput } from '../input/KeyboardInput';
+import { InputManager } from '../input/InputManager';
+import { calibrationStore, RadioInput } from '../input/RadioInput';
+import type { ControlState } from '../input/types';
 import { Powertrain } from '../sim/Powertrain';
 import type { PowerEvent } from '../sim/PowerStateMachine';
 import { mountAudioPrompt } from '../ui/AudioPrompt';
 import { OsdOverlay } from '../ui/OSD';
+import { CalibrationWizard } from '../ui/CalibrationWizard';
+import { InputVisualizer } from '../ui/InputVisualizer';
 import { armBlockedMessage, Toast } from '../ui/Toast';
 import { readParams } from './params';
 import { exposeDebug } from './debug';
@@ -45,7 +49,12 @@ export class App {
   drone!: DroneModel;
   environment!: Environment;
   readonly powertrain = new Powertrain();
-  readonly input = new KeyboardInput();
+  readonly input = new InputManager();
+  readonly inputViz: InputVisualizer;
+  /** H: hide the HUD (the OSD stays, it's part of the video). */
+  uiHidden = false;
+  /** Last frame's control state (debug / HUD). */
+  controlState: ControlState | null = null;
   readonly audio = new LiveAudio();
   /** Debug/verification: fixed prop RPM instead of the motor model (null = model). */
   rpmOverride: number[] | null = null;
@@ -107,6 +116,7 @@ export class App {
     const look = new LookUniforms();
     this.cameras = new CameraDirector(this.camera, this.controls, look, (kind) => this.post.setView(kind));
     this.cameras.onChange = (mode) => {
+      document.body.classList.toggle('pw-feed-view', mode !== 'orbit');
       if (mode === 'hd') this.recTimeS = 0;
     };
     this.post = new PostPipeline(renderer, this.scene, this.cameras.renderCamera, look);
@@ -118,6 +128,19 @@ export class App {
     this.osd = new OsdOverlay(container);
     mountAudioPrompt(this.audio);
     this.toast = new Toast();
+    this.inputViz = new InputVisualizer();
+    this.inputViz.onCalibrate = () => this.calibrateRadio();
+    this.input.onDevice = (event, d) => {
+      if (event === 'disconnected') return this.toast.show(`<b>${d.name}</b> disconnected`, 2000);
+      if (d.kind === 'gamepad')
+        this.toast.show(
+          `<b>${d.name}</b> connected · R2 throttle · R1 arm · L1+R1 kill · hold Options for the battery`,
+          4200,
+        );
+      else if (!calibrationStore.load(this.input.pads.get(d.index)?.id ?? ''))
+        this.toast.show(`<b>${d.name}</b> connected as an RC radio: press <b>Calibrate radio</b>`, 4200);
+      else this.toast.show(`<b>${d.name}</b> connected (calibrated)`, 2000);
+    };
     this.resize();
   }
 
@@ -202,18 +225,29 @@ export class App {
     this.pendingStep = 0;
     const pt = this.powertrain;
     const controls = this.input.poll(dt);
+    this.controlState = controls;
     for (const a of controls.actions) {
       if (a === 'plugToggle') pt.togglePlug();
       else if (a === 'armToggle') pt.toggleArm();
-      else if (a === 'kill') pt.kill();
+      else if (a === 'arm') {
+        if (!pt.power.armed) pt.arm();
+      } else if (a === 'disarm') {
+        if (pt.power.armed) pt.disarm();
+      } else if (a === 'kill') pt.kill();
       else if (a === 'beaconToggle') pt.toggleBeacon();
       else if (a === 'payloadToggle') this.drone.setPayloadVisible(!this.drone.payload.visible);
       else if (a === 'cameraCycle') this.cameras.cycle();
       else if (a === 'feedCycle') this.cycleFeed();
+      else if (a === 'hideUi') this.setUiHidden(!this.uiHidden);
+      else if (a === 'fullscreen') toggleFullscreen();
+      else if (a === 'motorTest') this.toast.show('Motor test panel: not built yet', 1600);
     }
+    if (controls.kill && pt.power.armed) pt.kill();
     pt.throttle = this.throttleOverride ?? controls.throttle;
     this.lastEvents = pt.update(simDt);
-    for (const e of this.lastEvents) if (e.type === 'armRefused') this.toast.show(armBlockedMessage(e.reason));
+    for (const e of this.lastEvents)
+      if (e.type === 'armRefused') this.toast.show(armBlockedMessage(e.reason, controls.device));
+    this.updateHaptics(controls);
 
     const rpms = this.rpmOverride ?? pt.rpms;
     this.drone.setRpm(rpms);
@@ -226,7 +260,44 @@ export class App {
     if (pt.power.armed) this.armedTimeS += simDt;
     this.recTimeS += dt;
     this.drawOsd();
+    this.inputViz.visible = !this.uiHidden && this.cameras.mode === 'orbit';
+    this.inputViz.update(controls, pt.power.armed, this.input.uncalibratedRadios.length > 0);
     if (!this.renderPaused) this.post.render();
+  }
+
+  setUiHidden(hidden: boolean): void {
+    this.uiHidden = hidden;
+    document.body.classList.toggle('pw-hide-ui', hidden);
+  }
+
+  /** Rumble on the active pad: weak motor follows load, strong pulses on beeps and arming. */
+  private updateHaptics(controls: ControlState): void {
+    const now = performance.now();
+    const h = this.input.haptics;
+    for (const e of this.lastEvents) {
+      if (e.type === 'escPowerOnTones' || e.type === 'escSignalTones') h.pulse(now, 420);
+      else if (e.type === 'armed' || e.type === 'disarmed' || e.type === 'armRefused') h.pulse(now);
+    }
+    const rpms = this.powertrain.rpms;
+    const load = Math.sqrt(rpms.reduce((s, r) => s + r, 0) / rpms.length / DRONE.rpmMax);
+    h.update(controls.device === 'gamepad' ? this.input.activePad : null, now, load);
+  }
+
+  /** Open the calibration wizard for the first radio that needs it (or the active radio). */
+  calibrateRadio(): void {
+    const active = this.input.pads.get(this.input.activeIndex);
+    const radio = this.input.uncalibratedRadios[0] ?? (active instanceof RadioInput ? active : null);
+    if (!radio) return this.toast.show('No RC radio connected', 1800);
+    new CalibrationWizard(
+      radio.id,
+      () => radio.last,
+      (cal) => {
+        if (!cal) return;
+        radio.calibration = cal;
+        calibrationStore.save(cal);
+        this.toast.show(`<b>${radio.name}</b> calibrated`, 2000);
+      },
+    );
   }
 
   /** V: analog / digital. Outside FPV it cuts straight to the FPV view in the new style. */
@@ -314,4 +385,9 @@ export class App {
   get backend(): 'webgpu' | 'webgl2' {
     return (this.renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'webgpu' : 'webgl2';
   }
+}
+
+function toggleFullscreen(): void {
+  if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+  else void document.documentElement.requestFullscreen?.().catch(() => {});
 }

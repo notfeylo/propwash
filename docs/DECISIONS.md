@@ -114,3 +114,27 @@ The ≈155° fisheye look is a barrel pass over the 125° rectilinear render. No
 ## 2026-09-25 · Camera cuts don't reset TRAA history
 
 A 150 ms cut dips through black and switches views at its midpoint. TRAA's history isn't cleared at the switch (three r186 has no public reset; forcing one reallocates render targets, a hitch). Reprojection with the new camera's velocity rejects nearly all old samples, and what's left is under the fade.
+
+## 2026-09-25 · Throttle follows the device used last
+
+§4.7 asks for one ControlState per frame, whatever the device. Actions from every device apply (a keyboard P and a pad R1 both work), but throttle and sticks come from the device touched most recently: a key press, a pad button or stick past 20%, or a calibrated radio stick. Switching back to the keyboard starts W/S from the throttle the pad left, so it never jumps. Unplugging the active pad hands control back to the keyboard.
+
+## 2026-09-25 · R2 stays the default pad throttle
+
+A PS4 stick self-centers, so the Mode 2 left-stick throttle rests at 50%, above the 5% arming limit. R2 stays the bench default. `GAMEPAD.throttleSource = 'stick'` switches to the stick, and `throttleHold` makes it accumulate (push up to raise, let go to hold) as §4.7 allows. The settings UI (Task 8) exposes both.
+
+## 2026-09-25 · Stick shaping: radial deadzone, then per-axis expo
+
+A radial deadzone keeps diagonals pointing the right way. Rescaling the radius and clamping each axis lets a full diagonal reach both corners; capping the radius at 1 would have limited full roll plus full pitch to 71% each.
+
+## 2026-09-25 · Radio arm switch is level-triggered
+
+A radio's arm switch is a position, not a button. Flipping it on sends an arm request, which is refused with the same THROTTLE / BOOTING / NO POWER reasons, and flipping it off disarms. As in Betaflight, a refused arm needs the switch cycled. The first reading after a radio connects only records the switch, so plugging in a radio with the switch already on never arms. Calibration is per device id in `localStorage` and falls back to session-only when storage is blocked.
+
+## 2026-09-25 · The HUD stays out of the FPV and HD views
+
+§4.8 keeps the UI out of the FPV view except the OSD. The key hint and input widget show only in the orbit view, and H hides them there too. Toasts still appear in every view, because they explain refused commands.
+
+## 2026-09-25 · Weak rumble follows the square root of motor load
+
+Mapping the weak motor linearly to average RPM / rpmMax made idle (2,400 RPM, ≈7%) imperceptible. The square root gives idle a faint hum and full throttle `HAPTICS.weakMax`. Strong pulses mark the ESC tones (a longer buzz), arming, disarming and a refused arm. Rumble goes only to the active pad, so a controller lying on the desk stays quiet while someone uses the keyboard.
