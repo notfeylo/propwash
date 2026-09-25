@@ -54,6 +54,7 @@ export const RENDER = {
 } as const;
 
 export const ENVIRONMENT = {
+  /** Also preloaded in index.html; keep the two in sync. */
   hdriUrl: '/hdri/studio_small_09_1k.hdr',
   intensity: 0.9,
   /** Yaw of the HDRI (radians) so the main softbox sits camera-left of the default view. */

@@ -7,6 +7,9 @@
     <meta name="color-scheme" content="dark" />
     <title>PROPWASH</title>
     <link rel="icon" href="data:," />
+    <!-- Fetch the big assets while the renderer starts (they're requested only after init otherwise). -->
+    <link rel="preload" href="/models/drone.glb" as="fetch" type="model/gltf-binary" crossorigin="anonymous" />
+    <link rel="preload" href="/hdri/studio_small_09_1k.hdr" as="fetch" crossorigin="anonymous" />
     <style>
       html,
       body {

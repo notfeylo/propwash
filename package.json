@@ -21,7 +21,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "verify:visual": "node tools/verify-visual.mjs",
-    "verify:audio": "node tools/verify-audio.mjs"
+    "verify:audio": "node tools/verify-audio.mjs",
+    "verify:budgets": "node tools/verify-budgets.mjs"
   },
   "dependencies": {
     "three": "0.186.1"

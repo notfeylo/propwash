@@ -11,6 +11,7 @@ export const MODEL_CREDIT =
   'This work is based on "FPV-dron_NonStop" (https://sketchfab.com/3d-models/fpv-dron-nonstop-c75dea6e3ae441ac87f292efb17f5bae) by Viktor_ (https://sketchfab.com/Viktor.Zhuravlev) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)';
 
 export const DRONE = {
+  /** Also preloaded in index.html; keep the two in sync. */
   modelUrl: '/models/drone.glb',
   /** Betaflight motor order M1..M4. */
   rotorNames: ['rotor_RR', 'rotor_FR', 'rotor_RL', 'rotor_FL'] as const,
