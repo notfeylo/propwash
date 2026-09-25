@@ -1,0 +1,15 @@
+name: Feature request
+description: Suggest something that would make the sim more real
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like, and why?
+    validations:
+      required: true
+  - type: textarea
+    id: reference
+    attributes:
+      label: Real-world reference
+      description: Footage, Betaflight docs, or measurements that show how the real thing behaves.

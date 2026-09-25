@@ -1,0 +1,7 @@
+dist
+public
+assets-src
+pnpm-lock.yaml
+docs/PRD.md
+tools/split-drone.mjs
+CODE_OF_CONDUCT.md
