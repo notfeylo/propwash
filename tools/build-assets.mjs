@@ -2,7 +2,7 @@
 // assets-src/ → public/: split the drone into animatable parts, then optimize it.
 // Audio cuts (§4.5) are added in Task 5.
 import { execFileSync } from 'node:child_process';
-import { existsSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -18,6 +18,8 @@ if (!existsSync(SRC)) {
   console.error(`missing ${path.relative(ROOT, SRC)}: unzip fpv-dron_nonstop.zip into assets-src/drone/`);
   process.exit(1);
 }
+
+mkdirSync(path.dirname(OUT), { recursive: true });
 
 console.log('» split');
 run([path.join(ROOT, 'tools/split-drone.mjs'), SRC, RAW]);

@@ -25,3 +25,7 @@ Task 1 needs visual proof that the pipeline output loads. `src/app/App.ts` is a 
 ## 2026-09-24 · KTX2 stretch not done
 
 `toktx` is not installed on the dev machine, so textures ship as WebP (2.68 MB total). KTX2 stays a P1 stretch.
+
+## 2026-09-24 · Deployed at propwash-sim.vercel.app
+
+`propwash.vercel.app` belongs to another Vercel account, so the project uses the §3.3 fallback, `propwash-sim.vercel.app`. The Vercel project is connected to the GitHub repo, so PRs get preview deploys.

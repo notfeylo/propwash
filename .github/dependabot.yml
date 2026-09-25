@@ -10,6 +10,9 @@ updates:
     ignore:
       # three is pinned to a known release; upgrade deliberately
       - dependency-name: three
+      # typescript-eslint 8.x supports typescript <6.1 (see docs/DECISIONS.md)
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule:
