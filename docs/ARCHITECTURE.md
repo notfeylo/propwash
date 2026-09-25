@@ -54,10 +54,41 @@ Rotor angles are integrated from RPM each frame (`angle += spinSign · rpm/60 ·
 
 ## Verification
 
-- `pnpm test`: unit tests (blend continuity, aliasing, vibration bounds, antenna stability, quality picker).
-- `pnpm test:e2e`: smoke test plus rig checks (pivots on the PRD axes, hubs fixed while turning, spin directions, stages by RPM, ground offset).
+- `pnpm test`: unit tests (blend continuity, aliasing, vibration bounds, antenna stability, quality picker, motor dynamics, power states, battery, audio mapping, loop seam).
+- `pnpm test:e2e`: smoke test, rig checks, and the power flow through the real keyboard.
 - `pnpm verify:visual [url]`: renders the §4.9 screenshots into `docs/verification/`. Set `CHANNEL=chrome` to use an installed Chrome with WebGPU.
-- `window.__propwash` (see `src/app/debug.ts`) drives all of the above: freeze/step the sim clock, set RPM or rotor angles, toggle arrows, payload and LEDs, and project world points to pixels.
+- `pnpm verify:audio [url] [--clips]`: renders bench sessions offline and measures the §4.9 audio criteria into `docs/verification/audio/`. Runs in CI on the procedural path.
+- `window.__propwash` (see `src/app/debug.ts`) drives all of the above: freeze/step the sim clock, set RPM or rotor angles, plug/arm/throttle, toggle arrows, payload and LEDs, render audio offline, and project world points to pixels.
+
+## Powertrain (`src/sim`, PRD §4.4)
+
+```
+input actions ──▶ PowerStateMachine ──events──▶ AudioEngine (beeps, spool one-shots), LEDs
+                  OFF → BOOTING → DISARMED ⇄ ARMED ⇄ SPINNING
+throttle ──▶ targetRpm(throttle, Vbat) ──▶ MotorModel ×4 ──rpm──▶ DroneModel (props), AudioEngine
+                                           ▲ lag + 2% overshoot, ±0.7% noise, ±0.3% offset,
+                                           │ staggered idle ramp on arm, τcoast when unpowered
+Battery ◀── I = k·Σrpm³ ── sag feeds back into the RPM ceiling (KV × Vbat) and the low-battery beeper
+```
+
+## Audio (`src/audio`, PRD §4.5)
+
+```
+per motor (×4, HRTF panner at the rotor):
+  A loop (recording, normalized) ─┐
+  B PeriodicWave (measured harmonics, per-voice phases) ─┤
+  C whine (rpm/60 × 7) ─┤── × motorTrim ──┐
+  D noise → band-pass ─┤                  ├── panner ──┐
+  E transient bursts ──┘                  │            │
+  ESC beeps (square → drive → band-pass) ─┘            │
+FC piezo + XT60 tick ── frame panner ─────────────────┤
+                                                      ▼
+            bus → high-shelf (FPV) → air low-pass (orbit distance) → compressor → master
+                                   └→ small-room convolver (orbit only) ┘   ▲
+                                          FPV wind rumble (low-passed noise) ┘
+```
+
+The AudioContext is created on the first user gesture (autoplay policy). Without the git-ignored recording, `pnpm assets` skips the clips and the engine runs procedural-only (layers B–E), which is what the public build ships.
 
 ## Source layout
 

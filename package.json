@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "verify:visual": "node tools/verify-visual.mjs"
+    "verify:visual": "node tools/verify-visual.mjs",
+    "verify:audio": "node tools/verify-audio.mjs"
   },
   "dependencies": {
     "three": "0.186.1"

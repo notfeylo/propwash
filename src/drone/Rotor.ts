@@ -173,6 +173,22 @@ export class Rotor {
     this.blur.color.value.setRGB(r, g, b);
   }
 
+  /**
+   * Show every prop layer in its translucent variant at zero opacity, so the first render
+   * compiles those GPU pipelines at load instead of stalling the first spin-up (~300 ms).
+   * The next update() restores the real state.
+   */
+  warmUp(): void {
+    this.bladeMat.transparent = true;
+    this.bladeMat.mrtNode = keepVelocityBehind();
+    this.bladeMat.needsUpdate = true;
+    this.blades.visible = true;
+    this.ghosts.visible = true;
+    this.ghostOpacity.value = 0;
+    this.blur.mesh.visible = true;
+    this.blur.weight.value = 0;
+  }
+
   /** Set the rotor angle directly (verification / debug). */
   setAngle(rad: number): void {
     this.angle = wrapAngle(rad);

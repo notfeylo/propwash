@@ -178,6 +178,11 @@ export class DroneModel {
     this.updateGroundOffset();
   }
 
+  /** See Rotor.warmUp: compile the spinning-prop variants before the first frame. */
+  warmUp(): void {
+    for (const r of this.rotors) r.warmUp();
+  }
+
   setSpinArrowsVisible(visible: boolean): void {
     this.arrows.group.visible = visible;
   }

@@ -65,3 +65,36 @@ Blade, ghost and disc shadows are masked in the shadow pass by a hash compared w
 ## 2026-09-24 · Blur disc gets a sheen lift
 
 At the measured coverage (0.18), a dark carbon disc over the dark pad was nearly invisible, so the prop seemed to vanish when the smear handed off to the disc around 2,300–2,600 RPM. Blending scales the disc's lit specular by its alpha too, which removes the glints that make real blurred props visible. The disc color adds `PROP_DISC.sheenLift` (the time-averaged blade glints) to the sampled prop color. Coverage stays at the physical value.
+
+Seen from the side at hover, the flat disc then mirrored the studio softboxes as a crisp white hoop (Fresnel → 1 at grazing angles). The sheen band is wider and rougher and the disc's environment reflection is scaled by `PROP_DISC.envIntensity` (0.45), which leaves a soft sheen.
+
+## 2026-09-24 · Motor overshoot: an underdamped tracker, not lag + spring
+
+§4.4 asks for a first-order lag (τup 60 ms, τdown 120 ms) plus a small overshoot on throttle snaps. A spring following the first-order lag never overshot: the lag's approach is already smooth, so snaps measured −0.3%. While driven, RPM now follows the command as an underdamped second-order tracker with ζ = 0.78 and ωn = 1.84/τ. That reaches 63% at τ, like the PRD's lag, and a snap overshoots by ≈2% while slow sweeps don't ring (unit-tested). Coasting when unpowered is a plain exponential with τcoast.
+
+## 2026-09-24 · One pitch reference for all tonal audio layers
+
+§4.5 maps the recording (f₀ 294.7 Hz) to `rpmHover` = 11,000 but defines layer B as `BPF = rpm/60 × 3`, which is 550 Hz at 11,000 RPM. Layers A and B would be ≈11 semitones apart on every note. Layer B is pitched from the same reference as the recording: f = 294.7 Hz × rpm/rpmHover. So the synth and the recording agree, the measured harmonic profile applies as measured, and the procedural-only build (what ships) sounds like the recording path. Motor whine (C) stays physical at `rpm/60 × 7`. Also note: the §4.4 curve gives ≈12,600 RPM at 38% throttle, not the "≈11,000 ≈ 38%" in the text; hover is ≈32% on this curve.
+
+## 2026-09-24 · The PRD's spool-down ffmpeg command produced silence
+
+With `-ss` after `-i` (output seeking), ffmpeg filters the whole file before trimming, so `afade=t=out:st=2.4` faded at 2.4 s of the _source_ and the 11.2–13.9 s clip came out at −91 dB. The one-shots now seek on the input (`-ss/-to` before `-i`), which makes fade times relative to the cut. The loop keeps output seeking for sample-exact cuts. Verified levels: loop −23.3, spool-up −20.2, spool-down −20.7 dB mean.
+
+## 2026-09-24 · Audio gain staging, beating, and the recording's level
+
+- Four near-unison voices summed almost coherently and drove the master compressor hard, so loudness plateaued above ≈5k RPM. Each motor voice now has a trim (`AUDIO.master.motorTrim`) and the compressor is gentle (−12 dB, 2.5:1).
+- Identical waveforms at ±1% RPM beat as one comb, with deep simultaneous nulls (phasing). Each voice's PeriodicWave has the measured harmonic magnitudes with its own random phases, so each harmonic beats independently. Some beating remains by design (§4.4: "what produces the natural audio beating").
+- The recording sits at ≈ −23 dBFS while the synth is near full scale, so handing off from B to A lost ≈9 dB. The loop is normalized to the synth's RMS at load.
+- Layer E is set so a full-strength rip sits at the motor body's level; the verifier measures +30 dB in 1–6 kHz over the 80 ms after a snap vs. E muted.
+
+## 2026-09-24 · How the audio criteria are measured
+
+`pnpm verify:audio` renders sessions offline and measures them (`docs/verification/audio/README.md`). Level is the mean power over both ears, not a mono downmix, because summing L+R creates cancellations no listener hears. Loudness uses EBU-style 400 ms short-term windows. Pitch tracking passes at a median under 25 cents with ≥85% of frames within 50 cents; the recording path carries the recording's own slight pitch wander. The coast check requires ≥6 dB down after 1 s and silence once stopped, because one window can sit ±3 dB off the RPM curve while the motors beat.
+
+## 2026-09-24 · Minimal keyboard input ahead of Task 7
+
+Tasks 4–5 can't be tried without plugging in, arming and throttling, so the §4.7 keys they need (P, Space, X, W/S with Shift, 0, B, L) are live now, producing the §4.7 `ControlState`. Task 7 adds gamepad, RC radio, bindings and the input visualizer on top. A one-line key hint replaces the audio prompt until Task 8's HUD.
+
+## 2026-09-24 · First spin-up hitch: warm the prop pipelines at load
+
+The first arm froze for ≈290 ms at ≈400 RPM, when the blades switched to their translucent variant and the ghosts and disc first drew, compiling new GPU pipelines mid-frame (the sim then lost time to the 100 ms dt clamp). At load the rig now renders those variants once at zero opacity. The velocity MRT override is also a single shared node, because pipelines are keyed by node identity and a fresh node recompiled on every fade. The worst frame from arm to full throttle is now 18–30 ms.

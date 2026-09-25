@@ -36,7 +36,12 @@ export class PropBlur {
     const alpha = this.weight.mul(cfg.coverage).mul(radial).mul(streak.add(1)).clamp(0, 1);
     const band = float(1).sub(smoothstep(float(0), float(cfg.sheenWidth), rn.sub(cfg.sheenCenter).abs()));
 
-    const mat = new MeshStandardNodeMaterial({ transparent: true, depthWrite: false, side: DoubleSide });
+    const mat = new MeshStandardNodeMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: DoubleSide,
+      envMapIntensity: cfg.envIntensity,
+    });
     mat.colorNode = this.color.add(cfg.sheenLift);
     mat.opacityNode = alpha;
     mat.metalnessNode = float(0);
