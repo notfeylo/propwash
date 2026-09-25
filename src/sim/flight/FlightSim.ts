@@ -2,7 +2,8 @@ import type RAPIER_NS from '@dimforge/rapier3d-deterministic-compat';
 import type { WindPreset } from '../../config/aero';
 import { type Airframe, MOTOR_PROP, ROTORS } from '../../config/airframes';
 import { FLIGHT_COLLIDER, PHYSICS } from '../../config/physics';
-import { BODY } from '../frames';
+import { FlightController, type Sticks } from '../fc/FlightController';
+import { BODY, type FlightAxes, flightToBody } from '../frames';
 import { Rng } from '../rng';
 import {
   add,
@@ -26,12 +27,14 @@ import { FlightMotors, thrust } from './FlightMotors';
 
 export type Rapier = typeof RAPIER_NS;
 
-/** What the pilot / flight controller commands this step. */
+/** What the pilot commands this step. */
 export interface FlightInputs {
   /** ESCs driving the motors (armed or motor test). */
   driven: boolean;
-  /** Per-motor command 0..1 (M1..M4). */
+  /** Direct per-motor command 0..1 (M1..M4): motor test, or open-loop tests without `sticks`. */
   cmd: readonly number[];
+  /** Armed flight: sticks go through the flight controller, which produces the commands. */
+  sticks?: Sticks;
   /** Motor test: a 0 command stops the motor rather than idling. */
   stopAtZero?: boolean;
 }
@@ -84,7 +87,10 @@ export class FlightSim {
   readonly motors: FlightMotors;
   readonly battery: FlightBattery;
   readonly wind: Wind;
+  readonly fc: FlightController;
   readonly rng: Rng;
+  /** Test hook: an external torque (N·m, flight axes) applied every step while set. */
+  disturbance: FlightAxes | null = null;
   readonly h = 1 / PHYSICS.rateHz;
   airframe: Airframe;
   inputs: FlightInputs = { driven: false, cmd: [0, 0, 0, 0] };
@@ -114,6 +120,7 @@ export class FlightSim {
     this.motors = new FlightMotors(this.rng.fork('imbalance'));
     this.battery = new FlightBattery(o.airframe.pack);
     this.wind = new Wind(this.rng.fork('wind'), o.wind);
+    this.fc = new FlightController(o.airframe, this.rng.fork('fc'), this.h);
 
     this.world = new R.World({ x: 0, y: -PHYSICS.gravity, z: 0 });
     this.world.timestep = this.h;
@@ -174,6 +181,7 @@ export class FlightSim {
       this.body.setTranslation({ x: t.x, y: t.y + this.bottomY(this.airframe) - this.bottomY(a), z: t.z }, true);
     }
     this.airframe = a;
+    this.fc.setAirframe(a);
     this.applyMassProperties();
     this.world.removeCollider(this.collider, false);
     this.collider = this.world.createCollider(this.colliderDesc(a), this.body);
@@ -210,10 +218,24 @@ export class FlightSim {
     const m = MOTOR_PROP;
     const body = this.body;
     const inp = this.inputs;
+    const ms = this.motors.motors;
+
+    // Flight controller: sensors sample the body as it is now, then the loop sets the motors.
+    const q0 = toQuat(body.rotation());
+    const truth = {
+      angularVelocityBody: rotateInv(q0, toV3(body.angvel())),
+      quaternion: q0,
+      accelWorld: this.state.acceleration,
+      gravity: PHYSICS.gravity,
+      motors: ms,
+      vLoaded: this.battery.voltage,
+    };
+    let cmd = inp.cmd;
+    if (inp.sticks && inp.driven) cmd = this.fc.update(truth, inp.sticks);
+    else this.fc.sense(truth);
 
     this.motors.drive = inp.driven && this.battery.connected ? 'driven' : 'coast';
-    this.motors.step(h, inp.cmd, this.battery.connected ? this.battery.voltage : 0, inp.stopAtZero);
-    const ms = this.motors.motors;
+    this.motors.step(h, cmd, this.battery.connected ? this.battery.voltage : 0, inp.stopAtZero);
     this.battery.update(
       h,
       ms.reduce((p, s) => p + m.kQ * s.omega * s.omega * s.omega, 0),
@@ -258,6 +280,7 @@ export class FlightSim {
     const vAirBody = sub(vCom, windV);
     force = add(force, bodyDrag(a, vAirBody, up));
     torque = add(torque, angularDamping(w));
+    if (this.disturbance) torque = add(torque, rotate(q, flightToBody(this.disturbance)));
 
     body.resetForces(false);
     body.resetTorques(false);
@@ -322,6 +345,12 @@ export class FlightSim {
   /** Arming ramp (idle stagger) with this sim's seeded randomness. */
   arm(soft?: boolean): void {
     this.motors.arm(this.motorRng, soft);
+    this.fc.reset(toQuat(this.body.rotation()), this.inputs.sticks);
+  }
+
+  /** Tilt the flight controller believes (deg): the arming small-angle check. */
+  get fcTiltDeg(): number {
+    return (this.fc.tilt * 180) / Math.PI;
   }
 
   dispose(): void {

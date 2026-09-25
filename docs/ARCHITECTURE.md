@@ -82,7 +82,7 @@ The HUD (top left) shows the power state, battery, per-motor RPM, camera, device
 
 ## Verification
 
-- `pnpm test`: unit tests, including the Flight Lab (`tests/unit/flight.test.ts`; `FLIGHT_LAB_REPORT=<file>` writes its measurements), blend continuity, aliasing, vibration bounds, antenna stability, quality picker, motor dynamics, power states, battery, audio mapping, loop seam).
+- `pnpm test`: unit tests, including the Flight Lab (`tests/unit/flight.test.ts`, `fc.test.ts`; `FLIGHT_LAB_DIR=<dir>` writes their measurements), blend continuity, aliasing, vibration bounds, antenna stability, quality picker, motor dynamics, power states, battery, audio mapping, loop seam).
 - `pnpm test:e2e`: smoke test, rig checks, the power flow through the real keyboard, camera cycling, and a simulated DualShock 4 (plug, arm, throttle, kill, rumble).
 - `pnpm verify:visual [url]`: renders the §4.9 screenshots into `docs/verification/`, including every camera view. Set `CHANNEL=chrome` to use an installed Chrome with WebGPU.
 - `pnpm verify:audio [url] [--clips]`: renders bench sessions offline and measures the §4.9 audio criteria into `docs/verification/audio/`. Runs in CI on the procedural path.
@@ -102,6 +102,19 @@ render ◀── interpolated pose (previous ⇄ current state), per-motor RPM, 
 ```
 
 `src/sim` has no three.js or DOM imports and runs headless in Vitest. Constants live in `src/config/airframes/*.ts` (SI units), `src/config/aero.ts` and `src/config/physics.ts`. `src/sim/frames.ts` is the only place axis conventions convert: three.js body axes ↔ flight axes (roll right, pitch nose-down and yaw right are positive). All noise comes from seeded streams (`src/sim/rng.ts`), so a seed plus an input log replays bit-identically. Rapier (the deterministic build) is imported after the first frame; until then, and with `?flight=0`, the Phase 1 bench model drives the props.
+
+## Flight controller (`src/sim/fc`, Phase 2 PRD §3)
+
+```
+sticks (frame rate) ─▶ PT3 smoothing (≈15 ms) ─▶ rates (Actual / Betaflight / RaceFlight / KISS)
+                                             └▶ Angle / Horizon: rate = kLevel·(stick·55° − estimated angle)
+gyro model: true ω + noise + imbalance vibration + bias ─▶ RPM notches ─▶ PT1 90 Hz ──┐
+accelerometer ─▶ PT1 ─▶ Mahony estimator (angle modes, arming tilt)                 │
+rate PID per axis: α = Kp·e + Ki·∫e (gyro-based relax, anti-windup) − Kd·dω/dt (TPA) + FF·dSp/dt
+τ = I·α ─▶ mixer: allocation matrix from geometry + spin, inverted; airmode (yaw scaled first) ─▶ cmd[4]
+```
+
+Everything runs inside the 1 kHz physics step (`FlightSim.stepOnce`), so smoothing, filters and the PID see every sample. `FlightController.telemetry` holds each loop's setpoint, gyro (raw and filtered), P/I/D/F and motor commands for the blackbox (group 6). Gains are physical (the PID outputs angular acceleration); Settings shows them as Betaflight-style numbers through one linear factor per term.
 
 ## Powertrain (`src/sim`, PRD §4.4)
 

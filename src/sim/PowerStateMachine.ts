@@ -1,7 +1,8 @@
+import { ARMING_FC } from '../config/fc';
 import { ARMING, POWER } from '../config/motor';
 
 export type PowerState = 'OFF' | 'BOOTING' | 'DISARMED' | 'ARMED' | 'SPINNING';
-export type ArmBlocker = 'THROTTLE' | 'FAILSAFE' | 'NO POWER' | 'BOOTING';
+export type ArmBlocker = 'THROTTLE' | 'ANGLE' | 'FAILSAFE' | 'NO POWER' | 'BOOTING';
 
 export type PowerEvent =
   | { type: 'plugged' }
@@ -16,6 +17,8 @@ export type PowerEvent =
 
 export interface PowerInputs {
   throttle: number;
+  /** Tilt the flight controller measures (deg); arming needs it under Betaflight's small_angle. */
+  tiltDeg?: number;
   failsafe?: boolean;
 }
 
@@ -83,7 +86,9 @@ export class PowerStateMachine {
             ? 'FAILSAFE'
             : inputs.throttle > ARMING.maxThrottle
               ? 'THROTTLE'
-              : null;
+              : (inputs.tiltDeg ?? 0) > ARMING_FC.maxTiltDeg
+                ? 'ANGLE'
+                : null;
     if (this.armed) return true;
     if (blocker) {
       this.warning = blocker;
@@ -135,6 +140,7 @@ export class PowerStateMachine {
 
     // The THROTTLE flag clears when the stick comes back down.
     if (this.warning === 'THROTTLE' && inputs.throttle <= ARMING.maxThrottle) this.warning = null;
+    if (this.warning === 'ANGLE' && (inputs.tiltDeg ?? 0) <= ARMING_FC.maxTiltDeg) this.warning = null;
     if (this.warning === 'BOOTING' && this.state !== 'BOOTING') this.warning = null;
     if (this.warning === 'NO POWER' && this.powered) this.warning = null;
 

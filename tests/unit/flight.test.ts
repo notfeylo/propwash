@@ -1,6 +1,4 @@
-/// <reference types="node" />
 import RAPIER from '@dimforge/rapier3d-deterministic-compat';
-import { writeFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AIRFRAMES, type Airframe, freestyle7, longrange7, MOTOR_PROP, rpmToRads } from '../../src/config/airframes';
 import { PHYSICS } from '../../src/config/physics';
@@ -8,27 +6,21 @@ import { attitude, bodyToFlight, flightToBody, worldToBody } from '../../src/sim
 import { FlightSim } from '../../src/sim/flight/FlightSim';
 import { omegaMax, thrust } from '../../src/sim/flight/FlightMotors';
 import { Rng } from '../../src/sim/rng';
+import { labReport } from './lab';
 import { quatFromAxisAngle, v3 } from '../../src/sim/vec';
 
 // Flight Lab, task group 1 (Phase 2 PRD §8.1, §10): open-loop physics, no flight controller.
 // Every test prints its measurements next to the PRD target.
 
 const G = PHYSICS.gravity;
-const report: string[] = [];
-const log = (s: string) => {
-  report.push(s);
-  console.log(s);
-};
+const lab = labReport('group1');
+const log = lab.log;
 
 beforeAll(async () => {
   await RAPIER.init();
 });
 
-// FLIGHT_LAB_REPORT=<path> writes the measurements as Markdown (Vitest hides passing tests' logs).
-afterAll(() => {
-  const out = process.env.FLIGHT_LAB_REPORT;
-  if (out) writeFileSync(out, report.map((l) => `- ${l}\n`).join(''));
-});
+afterAll(() => lab.flush());
 
 /**
  * PRD §8.1 lists LR punch-out targets of 4–5 g, ~37 m/s and ~50 m. With the PRD's own 6S2P Li-ion

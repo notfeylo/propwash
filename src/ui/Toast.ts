@@ -30,10 +30,12 @@ export function armBlockedMessage(reason: ArmBlocker, device: InputHintDevice = 
         device === 'keyboard'
           ? 'Press <b>0</b> or hold <b>S</b>'
           : device === 'gamepad'
-            ? 'Release <b>R2</b>'
+            ? 'Lower the throttle (left stick down, or release <b>R2</b>)'
             : 'Lower the throttle';
       return `Arming blocked: throttle above 5%. ${fix}, then arm${device === 'radio' ? ' (flip the switch off and on)' : ''}`;
     }
+    case 'ANGLE':
+      return 'Arming blocked: tilted more than 25°. Set the drone level (R resets to the pad)';
     case 'FAILSAFE':
       return 'Arming blocked: failsafe (no radio signal)';
   }

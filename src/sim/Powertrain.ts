@@ -1,4 +1,5 @@
 import { Battery, type PackState } from './Battery';
+import type { Sticks } from './fc/FlightController';
 import type { FlightSim } from './flight/FlightSim';
 import { MotorModel, targetRpm } from './MotorModel';
 import { type PowerEvent, PowerStateMachine } from './PowerStateMachine';
@@ -18,6 +19,8 @@ export class Powertrain {
   private benchBattery = new Battery();
   /** Commanded throttle, 0..1. */
   throttle = 0;
+  /** Roll, pitch, yaw sticks (−1..1): the flight controller's input when a flight sim is attached. */
+  sticks = { roll: 0, pitch: 0, yaw: 0 };
   /**
    * Motor test (Betaflight Motors tab): while enabled and the drone is powered but disarmed, each
    * motor runs at its own 0..1 command (0 = stopped, not idle). Arming is blocked meanwhile.
@@ -76,10 +79,14 @@ export class Powertrain {
     else this.arm();
   }
 
+  private get powerInputs() {
+    return { throttle: this.throttle, tiltDeg: this.flight?.fcTiltDeg };
+  }
+
   /** Refused (false) while the motor test is on, like Betaflight while its Motors tab is open. */
   arm(): boolean {
     if (this.motorTest.enabled) return false;
-    return this.power.arm({ throttle: this.throttle });
+    return this.power.arm(this.powerInputs);
   }
 
   disarm(): void {
@@ -95,7 +102,7 @@ export class Powertrain {
   }
 
   update(dt: number): PowerEvent[] {
-    const events = this.power.update(dt, { throttle: this.throttle });
+    const events = this.power.update(dt, this.powerInputs);
     for (const e of events) {
       if (e.type === 'plugged') {
         this.battery.connected = true;
@@ -111,12 +118,13 @@ export class Powertrain {
       }
     }
     if (this.flight) {
-      // Group 1 has no flight controller: throttle drives all four motors open loop.
+      // Armed: the sticks go through the flight controller. Disarmed: the motor test, if on.
       const armed = this.power.armed;
-      const t = this.throttle;
+      const sticks: Sticks = { throttle: this.throttle, ...this.sticks };
       this.flight.inputs = {
         driven: armed || this.testing,
-        cmd: armed ? [t, t, t, t] : this.motorTest.values,
+        cmd: this.motorTest.values,
+        sticks: armed ? sticks : undefined,
         stopAtZero: !armed,
       };
       this.flight.advance(dt);
