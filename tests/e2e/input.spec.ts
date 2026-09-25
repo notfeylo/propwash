@@ -17,7 +17,8 @@ const B = { circle: 1, square: 2, triangle: 3, l1: 4, r1: 5, r2: 7, options: 9 }
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const rumble: Window['__pad']['rumble'] = [];
-    const state = { axes: [0, 0, 0, 0], pressed: [] as number[], values: {} as Record<number, number> };
+    // Mode 2: left stick Y is the throttle (+1 = bottom = 0%), as in the Phase 2 default.
+    const state = { axes: [0, 1, 0, 0], pressed: [] as number[], values: {} as Record<number, number> };
     const snapshot = () => ({
       id: 'Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 09cc)',
       index: 0,
@@ -38,7 +39,7 @@ test.beforeEach(async ({ page }) => {
       },
     });
     window.__pad = {
-      set: (p) => Object.assign(state, { axes: [0, 0, 0, 0], pressed: [], values: {} }, p),
+      set: (p) => Object.assign(state, { axes: [0, 1, 0, 0], pressed: [], values: {} }, p),
       rumble,
     };
     Object.defineProperty(navigator, 'getGamepads', { value: () => [snapshot(), null, null, null] });
@@ -59,7 +60,7 @@ async function tap(page: Page, buttons: number[]) {
   await page.waitForTimeout(150);
 }
 
-test('PS4 pad: hold Options to plug, R1 arms, R2 throttles, L1+R1 kills', async ({ page }) => {
+test('PS4 pad: hold Options to plug, R1 arms, left stick throttles, L1+R1 kills', async ({ page }) => {
   await page.waitForFunction(() => window.__propwash!.input().pads.length === 1);
   expect((await page.evaluate(() => window.__propwash!.input().pads))[0]).toMatchObject({
     kind: 'gamepad',
@@ -74,10 +75,10 @@ test('PS4 pad: hold Options to plug, R1 arms, R2 throttles, L1+R1 kills', async 
   await waitState(page, 'DISARMED');
 
   // R2 held: arming is refused with the pad's hint.
-  await pad(page, { values: { [B.r2]: 0.4 } });
+  await pad(page, { axes: [0, 0.2, 0, 0] });
   await page.waitForTimeout(200);
-  await pad(page, { values: { [B.r2]: 0.4 }, pressed: [B.r1] });
-  await expect(page.locator('.pw-toast.pw-show')).toContainText('Release R2');
+  await pad(page, { axes: [0, 0.2, 0, 0], pressed: [B.r1] });
+  await expect(page.locator('.pw-toast.pw-show')).toContainText('Lower the throttle');
   await pad(page, {});
   await page.waitForTimeout(200);
 
@@ -86,7 +87,7 @@ test('PS4 pad: hold Options to plug, R1 arms, R2 throttles, L1+R1 kills', async 
   const input = await page.evaluate(() => window.__propwash!.input().state);
   expect(input?.device).toBe('gamepad');
 
-  await pad(page, { values: { [B.r2]: 1 } });
+  await pad(page, { axes: [0, -1, 0, 0] });
   await page.waitForFunction(() => window.__propwash!.power().rpms.every((r) => r > 15_000), undefined, {
     timeout: 10_000,
   });
@@ -96,9 +97,9 @@ test('PS4 pad: hold Options to plug, R1 arms, R2 throttles, L1+R1 kills', async 
   expect(rumble.some((r) => r.strongMagnitude > 0)).toBe(true);
   expect(rumble.at(-1)!.weakMagnitude).toBeGreaterThan(0.1);
 
-  await pad(page, { values: { [B.r2]: 1 }, pressed: [B.l1] });
+  await pad(page, { axes: [0, -1, 0, 0], pressed: [B.l1] });
   await page.waitForTimeout(150);
-  await pad(page, { values: { [B.r2]: 1 }, pressed: [B.l1, B.r1] });
+  await pad(page, { axes: [0, -1, 0, 0], pressed: [B.l1, B.r1] });
   await waitState(page, 'DISARMED', 5_000);
 });
 

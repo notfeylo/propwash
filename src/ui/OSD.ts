@@ -8,6 +8,8 @@ export interface OsdData {
   /** FC + VTX powered (battery plugged). */
   powered: boolean;
   armed: boolean;
+  /** Betaflight OSD flight-mode text (ACRO / ANGL / HOR). */
+  flightMode: string;
   voltage: number;
   cellVoltage: number;
   usedMah: number;
@@ -164,7 +166,7 @@ export class OsdOverlay {
     const items: Item[] = [
       { text: `RSSI ${OSD.rssi}`, col: L, row: 1, align: 'left' },
       { text: `LQ ${OSD.lq}`, col: L, row: 2, align: 'left' },
-      { text: OSD.flightMode, col: R, row: 1, align: 'right' },
+      { text: d.flightMode, col: R, row: 1, align: 'right' },
       { text: `${d.cellVoltage.toFixed(2)}V`, col: L, row: bottom - 1, align: 'left' },
       { text: `${d.voltage.toFixed(1)}V`, col: L, row: bottom, align: 'left' },
       { text: `THR ${String(Math.round(d.throttle * 100)).padStart(3, ' ')}`, col: C, row: bottom, align: 'center' },

@@ -40,10 +40,11 @@ test('motor test: safety gate, per-motor sliders, arming blocked', async ({ page
   await expect(panel.locator('[data-m="1"]')).toBeDisabled();
   await panel.getByLabel('I understand the props are on').check();
   await expect(panel.locator('[data-m="1"]')).toBeEnabled();
-  await panel.locator('[data-m="1"]').fill('60');
+  // Gentle: with flight physics one motor at high power tips the quad off the pad (props-on reality).
+  await panel.locator('[data-m="1"]').fill('20');
   await page.waitForFunction(() => {
     const r = window.__propwash!.power().rpms;
-    return r[1] > 10_000 && r[0] === 0 && r[2] === 0 && r[3] === 0;
+    return r[1] > 5_000 && r[0] === 0 && r[2] === 0 && r[3] === 0;
   });
   await expect(page.locator('.pw-hud .pw-badge')).toHaveText('MOTOR TEST');
 

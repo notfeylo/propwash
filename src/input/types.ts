@@ -14,7 +14,9 @@ export type InputAction =
   | 'fullscreen'
   | 'settings'
   /** Put the drone back on the launch pad (disarms). */
-  | 'reset';
+  | 'reset'
+  /** Acro → Angle → Horizon. */
+  | 'modeCycle';
 
 export type InputDevice = 'keyboard' | 'gamepad' | 'radio';
 

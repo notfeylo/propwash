@@ -1,5 +1,16 @@
 import { AUDIO, type AudioLayer } from '../config/audio';
 import { CAMERAS, type FeedStyle } from '../config/cameras';
+import {
+  type AxisGains,
+  type FlightMode,
+  MIXER,
+  MODES,
+  PID,
+  RATES,
+  type RateParams,
+  type RatesModel,
+  SENSORS,
+} from '../config/fc';
 import { GAMEPAD, HAPTICS, KEYBOARD, type ThrottleSource } from '../config/input';
 import { ARMING } from '../config/motor';
 import type { QualityPreset } from '../config/render';
@@ -25,7 +36,36 @@ export interface Settings {
   rumble: boolean;
   showFps: boolean;
   keys: Record<KeyAction, string[]>;
+  // Flight controller (Phase 2 §3)
+  flightMode: FlightMode;
+  airmode: boolean;
+  idealSensors: boolean;
+  ratesModel: RatesModel;
+  ratesRP: RateParams;
+  ratesYaw: RateParams;
+  /** PIDs in "Betaflight numbers" (0–200), mapped linearly to physical gains by `PID.bfScale`. */
+  pidRP: BfPid;
+  pidYaw: BfPid;
 }
+
+export interface BfPid {
+  p: number;
+  i: number;
+  d: number;
+  f: number;
+}
+
+const r1 = (x: number) => Math.round(x * 10) / 10;
+/** Physical gains → Betaflight-style numbers. */
+export const toBf = (g: AxisGains): BfPid => {
+  const k = PID.bfScale;
+  return { p: r1(g.kp / k.kp), i: r1(g.ki / k.ki), d: r1(g.kd / k.kd), f: r1(g.ff / k.ff) };
+};
+/** Betaflight-style numbers → physical gains. */
+export const fromBf = (b: BfPid): AxisGains => {
+  const k = PID.bfScale;
+  return { kp: b.p * k.kp, ki: b.i * k.ki, kd: b.d * k.kd, ff: b.f * k.ff };
+};
 
 export const SETTINGS_KEY = 'propwash.settings.v1';
 export const FOV_RANGE_DEG = [100, 150] as const;
@@ -50,6 +90,14 @@ export function defaultSettings(): Settings {
     rumble: HAPTICS.enabled,
     showFps: false,
     keys: Object.fromEntries(Object.entries(KEYBOARD.keys).map(([k, v]) => [k, [...v]])) as Record<KeyAction, string[]>,
+    flightMode: MODES.default,
+    airmode: MIXER.airmode,
+    idealSensors: SENSORS.ideal,
+    ratesModel: RATES.model,
+    ratesRP: { ...RATES.defaults[RATES.model] },
+    ratesYaw: { ...RATES.defaults[RATES.model] },
+    pidRP: toBf(PID.roll),
+    pidYaw: toBf(PID.yaw),
   };
 }
 
@@ -63,7 +111,15 @@ export function mergeSettings(raw: unknown): Settings {
   for (const k of Object.keys(out) as (keyof Settings)[]) {
     const v = r[k];
     if (v === undefined) continue;
-    if (k === 'layers' || k === 'keys') {
+    const dv = DEFAULTS[k];
+    if (dv && typeof dv === 'object' && !Array.isArray(dv) && k !== 'layers' && k !== 'keys') {
+      // Flat numeric records (rates, PIDs): take known numeric fields only.
+      if (v && typeof v === 'object') {
+        const target = out[k] as unknown as Record<string, unknown>;
+        for (const [sk, sv] of Object.entries(v as Record<string, unknown>))
+          if (sk in target && typeof sv === 'number' && Number.isFinite(sv)) target[sk] = sv;
+      }
+    } else if (k === 'layers' || k === 'keys') {
       if (v && typeof v === 'object') {
         const target = out[k] as Record<string, unknown>;
         for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) {
@@ -106,4 +162,5 @@ export function applyConfigSettings(s: Settings): void {
   GAMEPAD.expo = s.expo;
   HAPTICS.enabled = s.rumble;
   for (const [k, v] of Object.entries(s.keys)) KEYBOARD.keys[k as KeyAction] = [...v];
+  MIXER.airmode = s.airmode;
 }

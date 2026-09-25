@@ -52,6 +52,8 @@ export class GamepadInput {
   readonly name: string;
   private prev: boolean[] = [];
   private held = 0;
+  /** Stick and trigger positions when the pad last counted as "in use". */
+  private anchor: number[] | null = null;
   private plugFired = false;
   private heldThrottle = 0;
   /** Last raw snapshot (for the visualizer). */
@@ -96,6 +98,7 @@ export class GamepadInput {
       [B.motorTest, 'motorTest'],
       [B.payloadToggle, 'payloadToggle'],
       [B.reset, 'reset'],
+      [B.modeCycle, 'modeCycle'],
     ];
     for (const [i, a] of taps) if (edge(i)) actions.push(a);
 
@@ -116,11 +119,13 @@ export class GamepadInput {
       throttle = Math.max(0, Math.min(1, (1 - ax(PAD.axes.ly)) / 2));
     }
 
+    // In use = a button press or a stick/trigger *moving*, not merely resting off-centre (a Mode 2
+    // throttle held at the bottom would otherwise lock out the keyboard).
     const T = GAMEPAD.activityThreshold;
-    const active =
-      now.some((d, i) => d && !this.prev[i]) ||
-      pad.axes.some((v) => Math.abs(v) > T) ||
-      (pad.buttons[PAD.r2]?.value ?? 0) > T;
+    const pos = [...pad.axes, pad.buttons[PAD.r2]?.value ?? 0];
+    const moved = this.anchor !== null && pos.some((v, i) => Math.abs(v - (this.anchor![i] ?? v)) > T);
+    if (this.anchor === null || moved) this.anchor = pos;
+    const active = now.some((d, i) => d && !this.prev[i]) || moved;
     this.prev = now;
 
     return {

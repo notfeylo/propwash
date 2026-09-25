@@ -1,5 +1,7 @@
 import { defaultSettings, FOV_RANGE_DEG, type KeyAction, type Settings } from '../app/settings';
 import { CAMERAS } from '../config/cameras';
+import { RATES, type RatesModel } from '../config/fc';
+import { rate } from '../sim/fc/rates';
 import { injectCss, THEME } from './style';
 
 const CSS = `
@@ -32,9 +34,27 @@ const CSS = `
 .pw-set .pw-credits b { color: var(--pw-text); }
 .pw-set .pw-pad-t { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 11px; color: var(--pw-dim); }
 .pw-set .pw-pad-t b { color: var(--pw-text); font-weight: 600; }
+.pw-set input[type=number] {
+  width: 100%; box-sizing: border-box; font: 500 12px var(--pw-font); color: var(--pw-text);
+  background: #1a1f25; border: 1px solid var(--pw-line-strong); border-radius: 6px; padding: 4px 6px;
+}
+.pw-set .pw-rates { display: grid; grid-template-columns: 1fr repeat(3, 70px); gap: 6px; align-items: end; }
+.pw-set .pw-rates label { display: grid; gap: 2px; }
+.pw-set .pw-rates small { color: var(--pw-dim); font-size: 9px; }
+.pw-set .pw-pid { display: grid; grid-template-columns: 1fr repeat(4, 54px); gap: 6px 6px; align-items: center; }
+.pw-set .pw-pid b { text-align: center; color: var(--pw-dim); font-size: 10px; }
+.pw-set .pw-rate-curve { width: 100%; height: auto; border: 1px solid var(--pw-line); border-radius: 8px; }
 `;
 
-const TABS = ['Graphics', 'Camera', 'Audio', 'Drone', 'Controls', 'Credits'] as const;
+const TABS = ['Flight', 'Graphics', 'Camera', 'Audio', 'Drone', 'Controls', 'Credits'] as const;
+
+/** What the three rate numbers mean in each model. */
+const RATE_LABELS: Record<RatesModel, [string, string, string]> = {
+  actual: ['Center (°/s)', 'Max rate (°/s)', 'Expo'],
+  betaflight: ['RC rate', 'Super rate', 'RC expo'],
+  raceflight: ['Rate (°/s)', 'Acro+', 'Expo'],
+  kiss: ['RC rate', 'Rate', 'RC curve'],
+};
 
 const LAYERS: [keyof Settings['layers'], string, string][] = [
   ['A', 'A · Recorded body', 'Only with the local recording (not in the public build)'],
@@ -61,6 +81,13 @@ const KEY_LABELS: Record<KeyAction, string> = {
   fullscreen: 'Fullscreen',
   settings: 'Settings',
   reset: 'Reset to launch pad',
+  modeCycle: 'Flight mode (Acro / Angle / Horizon)',
+  yawLeft: 'Yaw left',
+  yawRight: 'Yaw right',
+  pitchForward: 'Pitch forward',
+  pitchBack: 'Pitch back',
+  rollLeft: 'Roll left',
+  rollRight: 'Roll right',
   fast: 'Fast throttle modifier',
 };
 
@@ -82,7 +109,7 @@ export class SettingsPanel {
   onChange?: (s: Settings) => void;
   onCalibrate?: () => void;
   private s: Settings;
-  private tab: (typeof TABS)[number] = 'Graphics';
+  private tab: (typeof TABS)[number] = 'Flight';
   private listening: KeyAction | null = null;
 
   constructor(settings: Settings, credit: string, parent: HTMLElement = document.body) {
@@ -145,6 +172,9 @@ export class SettingsPanel {
   private range(name: string, min: number, max: number, step: number): string {
     return `<span class="pw-rng"><input type="range" data-k="${name}" min="${min}" max="${max}" step="${step}"><output data-o="${name}"></output></span>`;
   }
+  private num(name: string, step: number): string {
+    return `<input type="number" data-k="${name}" step="${step}" inputmode="decimal">`;
+  }
   private check(name: string): string {
     return `<input type="checkbox" data-k="${name}">`;
   }
@@ -155,7 +185,51 @@ export class SettingsPanel {
   private sections(credit: string): string {
     const [fmin, fmax] = FOV_RANGE_DEG;
     const [umin, umax] = CAMERAS.fpv.uptiltRangeDeg;
+    const pid = (axis: 'pidRP' | 'pidYaw') =>
+      `<div class="pw-pid"><span></span><b>P</b><b>I</b><b>D</b><b>F</b><span>${axis === 'pidRP' ? 'Roll / pitch' : 'Yaw'}</span>${[
+        'p',
+        'i',
+        'd',
+        'f',
+      ]
+        .map((t) => this.num(`${axis}.${t}`, 1))
+        .join('')}</div>`;
+    const rates = (axis: 'ratesRP' | 'ratesYaw') =>
+      `<div class="pw-rates"><span>${axis === 'ratesRP' ? 'Roll / pitch' : 'Yaw'}</span>${['a', 'b', 'c']
+        .map((t, i) => `<label><small data-rl="${i}"></small>${this.num(`${axis}.${t}`, t === 'c' ? 0.01 : 1)}</label>`)
+        .join('')}</div>`;
     return `
+    <section data-sec="Flight">
+      ${this.field(
+        'Flight mode',
+        'Q / L2 cycles in flight',
+        this.select('flightMode', [
+          ['acro', 'Acro (rate)'],
+          ['angle', 'Angle (self-level)'],
+          ['horizon', 'Horizon'],
+        ]),
+      )}
+      ${this.field('Airmode', 'Keeps control authority at zero throttle', this.check('airmode'))}
+      ${this.field('Ideal sensors', 'Debug: no gyro noise, vibration or filter lag', this.check('idealSensors'))}
+      <h3>RATES</h3>
+      ${this.field(
+        'Rates model',
+        '',
+        this.select('ratesModel', [
+          ['actual', 'Actual (Betaflight default)'],
+          ['betaflight', 'Betaflight'],
+          ['raceflight', 'RaceFlight'],
+          ['kiss', 'KISS'],
+        ]),
+      )}
+      ${rates('ratesRP')}
+      ${rates('ratesYaw')}
+      <canvas class="pw-rate-curve" width="680" height="260" aria-label="Rates preview: stick deflection against rotation rate"></canvas>
+      <h3>PID (BETAFLIGHT NUMBERS)</h3>
+      ${pid('pidRP')}
+      ${pid('pidYaw')}
+      <button type="button" class="pw-btn" data-a="reset-flight">RESET RATES AND PIDS</button>
+    </section>
     <section data-sec="Graphics">
       ${this.field(
         'Quality preset',
@@ -207,7 +281,7 @@ export class SettingsPanel {
       ${this.field('Stick deadzone', '', this.range('deadzone', 0, 0.3, 0.01))}
       ${this.field('Stick expo', '', this.range('expo', 0, 1, 0.05))}
       ${this.field('Rumble', 'Chrome desktop', this.check('rumble'))}
-      <div class="pw-pad-t"><b>R1</b>arm / disarm<b>L1 + R1</b>kill<b>Options (hold)</b>battery<b>△ / □</b>camera / feed<b>○</b>beacon<b>Touchpad</b>motor test<b>Share</b>payload<b>D-pad ↓</b>reset to pad</div>
+      <div class="pw-pad-t"><b>R1</b>arm / disarm<b>L1 + R1</b>kill<b>Options (hold)</b>battery<b>△ / □</b>camera / feed<b>○</b>beacon<b>Touchpad</b>motor test<b>Share</b>payload<b>D-pad ↓</b>reset to pad<b>L2</b>flight mode</div>
       <h3>RC RADIO</h3>
       <button type="button" class="pw-btn" data-a="calibrate">CALIBRATE RADIO…</button>
       <h3>KEYBOARD <small style="letter-spacing:0">(click, then press a key)</small></h3>
@@ -251,6 +325,7 @@ export class SettingsPanel {
       this.showValue(c);
     });
     this.renderKeys();
+    this.drawRates();
   }
 
   private showValue(c: HTMLInputElement | HTMLSelectElement): void {
@@ -270,10 +345,69 @@ export class SettingsPanel {
     if (!k) return;
     let v: unknown = c.value;
     if (c instanceof HTMLInputElement && c.type === 'checkbox') v = c.checked;
-    else if (c instanceof HTMLInputElement && c.type === 'range') v = Number(c.value);
+    else if (c instanceof HTMLInputElement && (c.type === 'range' || c.type === 'number')) {
+      v = Number(c.value);
+      if (!Number.isFinite(v as number)) return;
+    }
     this.put(k, v);
+    if (k === 'ratesModel') {
+      // A new model starts from its own defaults: the numbers mean different things.
+      const d = RATES.defaults[v as RatesModel];
+      this.s.ratesRP = { ...d };
+      this.s.ratesYaw = { ...d };
+      this.sync();
+    }
     this.showValue(c);
+    this.drawRates();
     this.onChange?.(this.s);
+  }
+
+  /** Stick → rate curves for roll/pitch and yaw, with the full-stick rate. */
+  private drawRates(): void {
+    const cv = this.el.querySelector<HTMLCanvasElement>('.pw-rate-curve');
+    if (!cv) return;
+    const model = this.s.ratesModel;
+    this.el
+      .querySelectorAll<HTMLElement>('[data-rl]')
+      .forEach((el) => (el.textContent = RATE_LABELS[model][Number(el.dataset.rl)]));
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    const W = cv.width;
+    const H = cv.height;
+    const pad = 34;
+    const top = Math.max(rate(model, 1, this.s.ratesRP), rate(model, 1, this.s.ratesYaw), 200);
+    const yMax = Math.ceil(top / 200) * 200;
+    ctx.clearRect(0, 0, W, H);
+    ctx.font = '20px ui-monospace, Consolas, monospace';
+    ctx.fillStyle = 'rgba(231,234,238,0.5)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    for (let v = 0; v <= yMax; v += 200) {
+      const y = H - pad - (v / yMax) * (H - 2 * pad);
+      ctx.beginPath();
+      ctx.moveTo(pad, y);
+      ctx.lineTo(W - 8, y);
+      ctx.stroke();
+      ctx.fillText(String(v), 0, y + 7);
+    }
+    const plot = (p: typeof this.s.ratesRP, color: string, label: string, row: number) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let i = 0; i <= 100; i++) {
+        const x = pad + (i / 100) * (W - pad - 8);
+        const y = H - pad - (rate(model, i / 100, p) / yMax) * (H - 2 * pad);
+        if (i) ctx.lineTo(x, y);
+        else ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.fillText(`${label} ${Math.round(rate(model, 1, p))}°/s`, pad + 10, 28 + row * 24);
+    };
+    plot(this.s.ratesRP, '#27c7ff', 'ROLL/PITCH', 0);
+    plot(this.s.ratesYaw, '#ffb347', 'YAW', 1);
+    ctx.fillStyle = 'rgba(231,234,238,0.5)';
+    ctx.fillText('stick →', W - 110, H - 6);
   }
 
   private onClick(e: MouseEvent): void {
@@ -284,7 +418,18 @@ export class SettingsPanel {
     const a = t.dataset.a;
     if (a === 'close') this.setOpen(false);
     else if (a === 'calibrate') this.onCalibrate?.();
-    else if (a === 'reset-keys') {
+    else if (a === 'reset-flight') {
+      const d = defaultSettings();
+      Object.assign(this.s, {
+        ratesModel: d.ratesModel,
+        ratesRP: d.ratesRP,
+        ratesYaw: d.ratesYaw,
+        pidRP: d.pidRP,
+        pidYaw: d.pidYaw,
+      });
+      this.sync();
+      this.onChange?.(this.s);
+    } else if (a === 'reset-keys') {
       this.s.keys = defaultSettings().keys;
       this.renderKeys();
       this.onChange?.(this.s);

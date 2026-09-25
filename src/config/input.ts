@@ -6,6 +6,9 @@ export const KEYBOARD = {
   /** Throttle slew while W/S is held (fraction per second); Shift for fast. */
   throttleRate: 0.6,
   throttleRateFast: 1.5,
+  /** Roll / pitch / yaw from held keys ramp toward ±`axisMax` at this rate (per second) and back. */
+  axisRate: 5,
+  axisMax: 0.6,
   keys: {
     plugToggle: ['KeyP'],
     armToggle: ['Space'],
@@ -22,6 +25,13 @@ export const KEYBOARD = {
     fullscreen: ['KeyF'],
     settings: ['KeyO'],
     reset: ['KeyR'],
+    modeCycle: ['KeyQ'],
+    yawLeft: ['KeyA'],
+    yawRight: ['KeyD'],
+    pitchForward: ['ArrowUp'],
+    pitchBack: ['ArrowDown'],
+    rollLeft: ['ArrowLeft'],
+    rollRight: ['ArrowRight'],
     fast: ['ShiftLeft', 'ShiftRight'],
   },
 };
@@ -50,8 +60,8 @@ export const PAD = {
 } as const;
 
 export const GAMEPAD = {
-  /** Bench default: R2 analog. 'stick' = Mode 2 left stick Y (bottom → top = 0 → 1). */
-  throttleSource: 'trigger' as ThrottleSource,
+  /** Flight default (Phase 2 §4): Mode 2 left stick Y, bottom → top = 0 → 1. 'trigger' = R2 analog. */
+  throttleSource: 'stick' as ThrottleSource,
   /**
    * Stick throttle on a self-centering pad: accumulate instead of following the stick, so
    * pushing up raises throttle and letting go holds it (rate = fraction per second at full deflection).
@@ -77,6 +87,7 @@ export const GAMEPAD = {
     motorTest: PAD.touchpad,
     payloadToggle: PAD.share,
     reset: PAD.down,
+    modeCycle: PAD.l2,
   },
   /** The same action from a second pad within this window is a duplicate (DS4Windows, Steam Input). */
   duplicateWindowS: 0.25,

@@ -67,7 +67,6 @@ export const OSD = {
   /** Phase 1 has no link model: fixed healthy values. */
   rssi: 99,
   lq: 100,
-  flightMode: 'ACRO',
   /** Blink rate of warnings (Hz). */
   blinkHz: 2,
   /** Glyph colours: white with a dark outline like MAX7456 / DJI fonts. */

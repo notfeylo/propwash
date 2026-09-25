@@ -21,6 +21,8 @@ export interface Environment {
   texture: DataTexture;
   background: BackgroundMode;
   setBackground(mode: BackgroundMode): void;
+  /** Where the floor starts and finishes fading into the backdrop (m from the pad). */
+  setFloorFade(startM: number, endM: number): void;
 }
 
 /**
@@ -56,13 +58,19 @@ export async function createEnvironment(scene: Scene): Promise<Environment> {
   // Fade by distance from the pad, not view depth: the set dissolves into the backdrop like a
   // studio cove. Only the floor fades: anything above it (the drone in flight) never does.
   const { startM, endM, floorBandM } = ENVIRONMENT.horizonFog;
+  const fadeStart = uniform(startM);
+  const fadeEnd = uniform(endM);
   const nearFloor = smoothstep(float(floorBandM[1]), float(floorBandM[0]), positionWorld.y);
-  const fade = smoothstep(float(startM), float(endM), length(positionWorld.xz)).mul(nearFloor);
+  const fade = smoothstep(fadeStart, fadeEnd, length(positionWorld.xz)).mul(nearFloor);
   scene.fogNode = fog(mix(gradient, hdriBehind, hdriMode), fade);
 
   const env: Environment = {
     texture,
     background: ENVIRONMENT.background,
+    setFloorFade(start, end) {
+      fadeStart.value = start;
+      fadeEnd.value = end;
+    },
     setBackground(mode) {
       env.background = mode;
       hdriMode.value = mode === 'hdri' ? 1 : 0;

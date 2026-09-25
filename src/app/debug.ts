@@ -123,6 +123,11 @@ export interface DebugHandle {
   resetDrone(): void;
   /** Orbit camera follows the drone in flight (default on). */
   setFollow(follow: boolean): void;
+  /** Fixed roll/pitch/yaw sticks (−1..1), null = the input devices. */
+  setSticks(sticks: { roll: number; pitch: number; yaw: number } | null): void;
+  setFlightMode(mode: 'acro' | 'angle' | 'horizon'): void;
+  /** Last flight-controller loop: setpoint and gyro (deg/s), PID terms, motor commands. */
+  fc(): unknown;
   settings(): unknown;
   setUiHidden(hidden: boolean): void;
   /** World point → CSS pixel in the canvas, through the active view (before the barrel). */
@@ -277,6 +282,12 @@ export function exposeDebug(app: App): void {
     setWind: (w) => app.flight && (app.flight.wind.preset = w),
     resetDrone: () => app.resetDrone(),
     setFollow: (f) => (app.followDrone = f),
+    setSticks: (s) => (app.sticksOverride = s ? { ...s } : null),
+    setFlightMode(mode) {
+      app.settings.flightMode = mode;
+      if (app.flight) app.flight.fc.mode = mode;
+    },
+    fc: () => (app.flight ? JSON.parse(JSON.stringify(app.flight.fc.telemetry)) : null),
     settings: () => JSON.parse(JSON.stringify(app.settings)),
     setUiHidden: (h) => app.setUiHidden(h),
     setCamera: (mode, instant) => app.cameras.setMode(mode, instant),

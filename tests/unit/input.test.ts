@@ -48,8 +48,9 @@ describe('padName', () => {
 });
 
 describe('GamepadInput (PS4 bindings, PRD §4.7)', () => {
-  it('R2 is the analog bench throttle', () => {
+  it('R2 is the analog throttle when selected', () => {
     const g = new GamepadInput(DS4);
+    g.throttleSource = 'trigger';
     expect(g.poll(pad(), dt).throttle).toBe(0);
     expect(g.poll(pad({ values: { [PAD.r2]: 1 } }), dt).throttle).toBeCloseTo(1);
     expect(g.poll(pad({ values: { [PAD.r2]: 0.51 } }), dt).throttle).toBeCloseTo(0.5, 1);
@@ -199,6 +200,7 @@ describe('InputManager', () => {
     let pads: PadSnapshot[] = [];
     const target = new EventTarget() as unknown as Window;
     const m = new InputManager(target, () => pads);
+    m.throttleSource = 'trigger';
     expect(m.poll(dt).device).toBe('keyboard');
     pads = [pad({ values: { [PAD.r2]: 0.8 }, pressed: [PAD.triangle] })];
     const s = m.poll(dt);

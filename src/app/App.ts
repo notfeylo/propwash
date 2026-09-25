@@ -17,7 +17,7 @@ import { AIRFRAMES, withPayload } from '../config/airframes';
 import { DRONE, LEDS, MODEL_CREDIT, PROP_BLEND } from '../config/drone';
 import { PHYSICS } from '../config/physics';
 import type { FlightSim } from '../sim/flight/FlightSim';
-import { QUALITY, RENDER, type QualityPreset } from '../config/render';
+import { ENVIRONMENT, QUALITY, RENDER, type QualityPreset } from '../config/render';
 import { DroneModel } from '../drone/DroneModel';
 import { createBench } from '../render/bench';
 import { createEnvironment, type Environment } from '../render/environment';
@@ -39,7 +39,8 @@ import { MotorTestPanel, type MotorTestStatus } from '../ui/MotorTestPanel';
 import { SettingsPanel } from '../ui/SettingsPanel';
 import { armBlockedMessage, Toast } from '../ui/Toast';
 import { readParams } from './params';
-import { applyConfigSettings, loadSettings, saveSettings, type Settings } from './settings';
+import { applyConfigSettings, fromBf, loadSettings, saveSettings, type Settings } from './settings';
+import type { FlightMode } from '../config/fc';
 import { exposeDebug } from './debug';
 
 export class App {
@@ -79,6 +80,8 @@ export class App {
   rpmOverride: number[] | null = null;
   /** Debug/verification: fixed throttle instead of the keyboard (null = keyboard). */
   throttleOverride: number | null = null;
+  /** Debug/verification: fixed roll/pitch/yaw sticks (null = the input devices). */
+  sticksOverride: { roll: number; pitch: number; yaw: number } | null = null;
   /** When frozen, the simulation clock stops but frames keep rendering (for screenshots). */
   simFrozen = false;
   /** Tests: keep input + sim + audio running each frame but skip drawing (software GL is slow). */
@@ -232,6 +235,9 @@ export class App {
       if (sim.airframe.payload !== this.drone.payload.visible) this.drone.setPayloadVisible(sim.airframe.payload);
       this.powertrain.attachFlight(sim);
       this.flight = sim;
+      this.applyFcSettings();
+      const fade = ENVIRONMENT.flightFloorFade;
+      this.environment.setFloorFade(fade.startM, fade.endM);
       this.lastDronePos.copy(this.drone.root.position);
     } catch (err) {
       console.warn('Flight physics unavailable, staying on the bench:', err);
@@ -278,8 +284,31 @@ export class App {
     this.input.throttleSource = s.throttleSource;
     this.input.throttleHold = s.throttleHold;
     this.input.haptics.enabled = s.rumble;
+    this.applyFcSettings();
     // A ?quality= URL override (tests, screenshots) wins over the saved preset.
     if (!readParams().quality) this.quality.force(s.quality === 'auto' ? null : s.quality);
+  }
+
+  /** Flight controller settings (mode, rates, PIDs, sensors) onto the live FC. */
+  private applyFcSettings(): void {
+    const fc = this.flight?.fc;
+    if (!fc) return;
+    const s = this.settings;
+    fc.mode = s.flightMode;
+    fc.idealSensors = s.idealSensors;
+    fc.ratesModel = s.ratesModel;
+    fc.rates = { roll: { ...s.ratesRP }, pitch: { ...s.ratesRP }, yaw: { ...s.ratesYaw } };
+    const rp = fromBf(s.pidRP);
+    fc.gains = { roll: { ...rp }, pitch: { ...rp }, yaw: fromBf(s.pidYaw) };
+  }
+
+  /** Q / L2: Acro → Angle → Horizon. */
+  cycleFlightMode(): void {
+    const order: FlightMode[] = ['acro', 'angle', 'horizon'];
+    const next = order[(order.indexOf(this.settings.flightMode) + 1) % order.length];
+    this.remember({ flightMode: next });
+    this.applyFcSettings();
+    this.toast.show(`Flight mode: <b>${next.toUpperCase()}</b>`, 1400);
   }
 
   /** Mirror a change made outside the panel (keys, pad) into the saved settings. */
@@ -371,9 +400,11 @@ export class App {
       else if (a === 'motorTest') this.toggleMotorPanel();
       else if (a === 'settings') this.toggleSettings();
       else if (a === 'reset') this.resetDrone();
+      else if (a === 'modeCycle') this.cycleFlightMode();
     }
     if (controls.kill && pt.power.armed) pt.kill();
     pt.throttle = this.throttleOverride ?? controls.throttle;
+    pt.sticks = this.sticksOverride ?? { roll: controls.roll, pitch: controls.pitch, yaw: controls.yaw };
     pt.motorTest.enabled = this.motorPanel.open && this.motorPanel.safety;
     for (let i = 0; i < 4; i++) pt.motorTest.values[i] = this.motorPanel.values[i];
     this.lastEvents = pt.update(simDt);
@@ -477,6 +508,7 @@ export class App {
     let warning: string | null = null;
     if (p.powered) {
       if (p.warning === 'THROTTLE') warning = 'THROTTLE';
+      else if (p.warning === 'ANGLE') warning = 'ANGLE';
       else if (p.state === 'BOOTING') warning = 'BOOTING';
       else if (pt.battery.lowWarning) warning = 'LOW BATTERY';
       else if (p.beacon) warning = 'BEACON ON';
@@ -487,6 +519,9 @@ export class App {
         feed: this.cameras.feed,
         powered: p.powered,
         armed: p.armed,
+        flightMode: this.flight
+          ? ({ acro: 'ACRO', angle: 'ANGL', horizon: 'HOR' } as const)[this.settings.flightMode]
+          : 'ACRO',
         voltage: pt.battery.voltage,
         cellVoltage: pt.battery.cellVoltage,
         usedMah: pt.battery.usedMah,

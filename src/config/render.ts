@@ -65,6 +65,8 @@ export const ENVIRONMENT = {
   gradient: { bottom: 0x0d0f12, top: 0x2a2e35 },
   /** The floor fades into whatever background is behind it, by distance from the pad (m). */
   horizonFog: { startM: 1.2, endM: 6, floorBandM: [0.02, 0.3] as const },
+  /** In flight the whole bench floor stays visible for motion cues (until the group 3 test field). */
+  flightFloorFade: { startM: 5, endM: 7.9 },
 };
 
 export const LIGHTS = {
