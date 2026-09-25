@@ -21,6 +21,7 @@ export const KEYBOARD = {
     hideUi: ['KeyH'],
     fullscreen: ['KeyF'],
     settings: ['KeyO'],
+    reset: ['KeyR'],
     fast: ['ShiftLeft', 'ShiftRight'],
   },
 };
@@ -75,6 +76,7 @@ export const GAMEPAD = {
     beaconToggle: PAD.circle,
     motorTest: PAD.touchpad,
     payloadToggle: PAD.share,
+    reset: PAD.down,
   },
   /** The same action from a second pad within this window is a duplicate (DS4Windows, Steam Input). */
   duplicateWindowS: 0.25,

@@ -12,7 +12,9 @@ export type InputAction =
   | 'payloadToggle'
   | 'hideUi'
   | 'fullscreen'
-  | 'settings';
+  | 'settings'
+  /** Put the drone back on the launch pad (disarms). */
+  | 'reset';
 
 export type InputDevice = 'keyboard' | 'gamepad' | 'radio';
 

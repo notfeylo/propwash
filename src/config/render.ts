@@ -64,7 +64,7 @@ export const ENVIRONMENT = {
   /** Linear-sRGB gradient, bottom → top of the viewport. */
   gradient: { bottom: 0x0d0f12, top: 0x2a2e35 },
   /** The floor fades into whatever background is behind it, by distance from the pad (m). */
-  horizonFog: { startM: 1.2, endM: 6 },
+  horizonFog: { startM: 1.2, endM: 6, floorBandM: [0.02, 0.3] as const },
 };
 
 export const LIGHTS = {

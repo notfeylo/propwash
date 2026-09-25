@@ -107,6 +107,22 @@ export interface DebugHandle {
   motorTest(open: boolean, safety?: boolean): void;
   setMotorSlider(index: number, value: number): void;
   openSettings(open: boolean): void;
+  /** Flight physics state (null until Rapier has loaded, or on the bench). */
+  flight(): {
+    airframe: string;
+    wind: string;
+    position: [number, number, number];
+    velocity: [number, number, number];
+    tiltDeg: number;
+    rpm: number[];
+    voltage: number;
+    current: number;
+    droppedSteps: number;
+  } | null;
+  setWind(preset: 'calm' | 'light' | 'breezy'): void;
+  resetDrone(): void;
+  /** Orbit camera follows the drone in flight (default on). */
+  setFollow(follow: boolean): void;
   settings(): unknown;
   setUiHidden(hidden: boolean): void;
   /** World point → CSS pixel in the canvas, through the active view (before the barrel). */
@@ -241,6 +257,26 @@ export function exposeDebug(app: App): void {
     },
     setMotorSlider: (i, v) => app.motorPanel.set(i, v),
     openSettings: (open) => app.toggleSettings(open),
+    flight() {
+      const f = app.flight;
+      if (!f) return null;
+      const s = f.state;
+      const q = s.quaternion;
+      return {
+        airframe: f.airframe.id,
+        wind: f.wind.preset,
+        position: [s.position.x, s.position.y, s.position.z],
+        velocity: [s.velocity.x, s.velocity.y, s.velocity.z],
+        tiltDeg: (Math.acos(Math.min(1, 1 - 2 * (q.x * q.x + q.z * q.z))) * 180) / Math.PI,
+        rpm: [...s.rpm],
+        voltage: s.voltage,
+        current: s.current,
+        droppedSteps: f.droppedSteps,
+      };
+    },
+    setWind: (w) => app.flight && (app.flight.wind.preset = w),
+    resetDrone: () => app.resetDrone(),
+    setFollow: (f) => (app.followDrone = f),
     settings: () => JSON.parse(JSON.stringify(app.settings)),
     setUiHidden: (h) => app.setUiHidden(h),
     setCamera: (mode, instant) => app.cameras.setMode(mode, instant),

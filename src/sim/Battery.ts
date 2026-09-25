@@ -11,6 +11,18 @@ export function ocvPerCell(soc: number, curve: readonly (readonly [number, numbe
   return curve[curve.length - 1][1];
 }
 
+/** What the HUD, OSD and power logic read from a pack (bench `Battery` or flight `FlightBattery`). */
+export interface PackState {
+  connected: boolean;
+  voltage: number;
+  readonly cellVoltage: number;
+  current: number;
+  usedMah: number;
+  readonly soc: number;
+  lowWarning: boolean;
+  restingVoltage(): number;
+}
+
 /**
  * Cosmetic pack model (PRD §4.4): current from motor load (I ≈ k·Σrpm³), voltage sag
  * across internal resistance, and a mAh counter. Feeds the OSD and the motor ceiling.

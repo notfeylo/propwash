@@ -95,6 +95,7 @@ export class GamepadInput {
       [B.beaconToggle, 'beaconToggle'],
       [B.motorTest, 'motorTest'],
       [B.payloadToggle, 'payloadToggle'],
+      [B.reset, 'reset'],
     ];
     for (const [i, a] of taps) if (edge(i)) actions.push(a);
 

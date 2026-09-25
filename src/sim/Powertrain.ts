@@ -1,16 +1,21 @@
-import { Battery } from './Battery';
+import { Battery, type PackState } from './Battery';
+import type { FlightSim } from './flight/FlightSim';
 import { MotorModel, targetRpm } from './MotorModel';
 import { type PowerEvent, PowerStateMachine } from './PowerStateMachine';
 
 /**
- * Battery + ESCs + motors on the bench (Phase 1: RPM and state only, no flight).
- * Input code calls the action methods; `update` advances everything and returns the
- * frame's power events for audio and UI.
+ * Battery + ESCs + motors. Input code calls the action methods; `update` advances everything and
+ * returns the frame's power events for audio and UI.
+ *
+ * On the bench (Phase 1) it runs its own RPM model and cosmetic pack. With a flight sim attached
+ * (Phase 2) the power and arming logic stay here, and the motors, pack and body are the sim's.
  */
 export class Powertrain {
   readonly power = new PowerStateMachine();
   readonly motors: MotorModel;
-  readonly battery = new Battery();
+  /** Flight physics, when attached; otherwise the bench model runs. */
+  flight: FlightSim | null = null;
+  private benchBattery = new Battery();
   /** Commanded throttle, 0..1. */
   throttle = 0;
   /**
@@ -26,8 +31,25 @@ export class Powertrain {
     this.motors = new MotorModel(undefined, seed);
   }
 
+  get battery(): PackState {
+    return this.flight?.battery ?? this.benchBattery;
+  }
+
   get rpms(): number[] {
-    return this.motors.rpms;
+    return this.flight?.rpms ?? this.motors.rpms;
+  }
+
+  /** dRPM/dt per motor (RPM/s), for the audio transient layer. */
+  get rpmRates(): number[] {
+    if (this.flight) return this.flight.motors.motors.map((m) => (m.domega * 60) / (2 * Math.PI));
+    return this.motors.motors.map((m) => m.rpmRate);
+  }
+
+  /** Hand motors and pack to the flight sim; the pack's connection follows the power state. */
+  attachFlight(sim: FlightSim): void {
+    this.flight = sim;
+    sim.battery.connected = this.power.powered;
+    this.motors.setDrive('coast');
   }
 
   togglePlug(): void {
@@ -82,10 +104,23 @@ export class Powertrain {
         this.battery.connected = false;
         this.motors.setDrive('coast');
       } else if (e.type === 'armed') {
-        this.motors.arm(this.rand);
+        if (this.flight) this.flight.arm();
+        else this.motors.arm(this.rand);
       } else if (e.type === 'disarmed') {
         this.motors.setDrive('coast');
       }
+    }
+    if (this.flight) {
+      // Group 1 has no flight controller: throttle drives all four motors open loop.
+      const armed = this.power.armed;
+      const t = this.throttle;
+      this.flight.inputs = {
+        driven: armed || this.testing,
+        cmd: armed ? [t, t, t, t] : this.motorTest.values,
+        stopAtZero: !armed,
+      };
+      this.flight.advance(dt);
+      return events;
     }
     const v = this.battery.connected ? this.battery.voltage : 0;
     const testing = this.testing;
@@ -96,7 +131,7 @@ export class Powertrain {
       return testing && t > 0 ? targetRpm(t, v) : 0;
     });
     this.motors.update(dt, targets);
-    this.battery.update(dt, this.rpms, this.driven);
+    this.benchBattery.update(dt, this.rpms, this.driven);
     return events;
   }
 }

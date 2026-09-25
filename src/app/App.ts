@@ -12,7 +12,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CameraDirector } from '../cameras/CameraDirector';
 import type { AudioFrame, Vec3 } from '../audio/AudioEngine';
 import { LiveAudio } from '../audio/LiveAudio';
+import { WIND } from '../config/aero';
+import { AIRFRAMES, withPayload } from '../config/airframes';
 import { DRONE, LEDS, MODEL_CREDIT, PROP_BLEND } from '../config/drone';
+import { PHYSICS } from '../config/physics';
+import type { FlightSim } from '../sim/flight/FlightSim';
 import { QUALITY, RENDER, type QualityPreset } from '../config/render';
 import { DroneModel } from '../drone/DroneModel';
 import { createBench } from '../render/bench';
@@ -65,6 +69,11 @@ export class App {
   readonly settingsPanel: SettingsPanel;
   /** Smoothed frames per second (HUD, when enabled). */
   fps = 0;
+  /** Flight physics (Phase 2), once Rapier has loaded; null on the bench (`?flight=0`). */
+  flight: FlightSim | null = null;
+  private lastDronePos = new Vector3();
+  /** The orbit view follows the drone in flight (recordings turn it off for a fixed shot). */
+  followDrone = true;
   readonly audio = new LiveAudio();
   /** Debug/verification: fixed prop RPM instead of the motor model (null = model). */
   rpmOverride: number[] | null = null;
@@ -198,13 +207,69 @@ export class App {
     this.post.warmUp();
     drone.update(0);
     exposeDebug(this);
+    if (params.flight) void this.loadFlight();
+  }
+
+  /**
+   * Rapier (WASM) loads after the first frame so it never delays startup. Until it's ready the
+   * bench model drives the props; then the flight sim takes over motors, pack and body.
+   */
+  private async loadFlight(): Promise<void> {
+    const params = readParams();
+    try {
+      const [{ default: RAPIER }, { FlightSim }] = await Promise.all([
+        import('@dimforge/rapier3d-deterministic-compat'),
+        import('../sim/flight/FlightSim'),
+      ]);
+      await RAPIER.init();
+      const base = AIRFRAMES[params.airframe ?? 'longrange7'];
+      const sim = new FlightSim({
+        rapier: RAPIER,
+        airframe: withPayload(base, base.id === 'longrange7_payload' || this.drone.payload.visible),
+        wind: params.wind ?? WIND.default,
+        groundY: this.padTopY,
+      });
+      if (sim.airframe.payload !== this.drone.payload.visible) this.drone.setPayloadVisible(sim.airframe.payload);
+      this.powertrain.attachFlight(sim);
+      this.flight = sim;
+      this.lastDronePos.copy(this.drone.root.position);
+    } catch (err) {
+      console.warn('Flight physics unavailable, staying on the bench:', err);
+    }
+  }
+
+  /** Payload toggle: the canister, and the matching long-range preset in flight (PRD §2.1). */
+  setPayload(visible: boolean): void {
+    this.drone.setPayloadVisible(visible);
+    if (this.flight) this.flight.setAirframe(withPayload(this.flight.airframe, visible));
+  }
+
+  /** R / D-pad down: disarm and put the drone back on the launch pad. */
+  resetDrone(): void {
+    if (this.powertrain.power.armed) this.powertrain.disarm();
+    this.flight?.reset();
+  }
+
+  /** Place the model from the flight sim's interpolated pose; the orbit view follows it. */
+  private placeDrone(): void {
+    if (!this.flight) return;
+    const p = this.flight.interpolated();
+    const root = this.drone.root;
+    root.position.set(p.position.x, p.position.y, p.position.z);
+    root.quaternion.set(p.quaternion.x, p.quaternion.y, p.quaternion.z, p.quaternion.w);
+    if (this.followDrone) {
+      const d = this.v.copy(root.position).sub(this.lastDronePos);
+      this.camera.position.add(d);
+      this.controls.target.add(d);
+    }
+    this.lastDronePos.copy(root.position);
   }
 
   /** Push the current settings into the live objects (config-level values are applied too). */
   applySettings(): void {
     const s = this.settings;
     applyConfigSettings(s);
-    if (this.drone && this.drone.payload.visible !== s.payload) this.drone.setPayloadVisible(s.payload);
+    if (this.drone && this.drone.payload.visible !== s.payload) this.setPayload(s.payload);
     this.cameras.setFeed(s.feed);
     this.cameras.setUptilt(s.uptiltDeg);
     this.cameras.jello = s.jello;
@@ -279,6 +344,8 @@ export class App {
     this.controls.update(dt);
 
     const simDt = this.simFrozen ? this.pendingStep : dt;
+    // A frozen clock is stepped offline in chunks larger than a frame; don't cap those.
+    if (this.flight) this.flight.maxStepsPerFrame = this.simFrozen ? Infinity : PHYSICS.maxStepsPerFrame;
     this.pendingStep = 0;
     const pt = this.powertrain;
     const controls = this.input.poll(dt);
@@ -295,7 +362,7 @@ export class App {
       } else if (a === 'kill') pt.kill();
       else if (a === 'beaconToggle') pt.toggleBeacon();
       else if (a === 'payloadToggle') {
-        this.drone.setPayloadVisible(!this.drone.payload.visible);
+        this.setPayload(!this.drone.payload.visible);
         this.remember({ payload: this.drone.payload.visible });
       } else if (a === 'cameraCycle') this.cameras.cycle();
       else if (a === 'feedCycle') this.cycleFeed();
@@ -303,6 +370,7 @@ export class App {
       else if (a === 'fullscreen') toggleFullscreen();
       else if (a === 'motorTest') this.toggleMotorPanel();
       else if (a === 'settings') this.toggleSettings();
+      else if (a === 'reset') this.resetDrone();
     }
     if (controls.kill && pt.power.armed) pt.kill();
     pt.throttle = this.throttleOverride ?? controls.throttle;
@@ -313,6 +381,7 @@ export class App {
       if (e.type === 'armRefused') this.toast.show(armBlockedMessage(e.reason, controls.device));
     this.updateHaptics(controls);
 
+    this.placeDrone();
     const rpms = this.rpmOverride ?? pt.rpms;
     this.drone.setRpm(rpms);
     this.drone.update(simDt, this.simFrozen ? PROP_BLEND.nominalFrameDtS : dt);
@@ -447,10 +516,7 @@ export class App {
 
   private audioFrame(dt: number, rpms: readonly number[]): AudioFrame {
     const pt = this.powertrain;
-    const motors = pt.motors.motors;
-    const rates = this.rpmOverride
-      ? rpms.map((r, i) => (dt > 0 ? (r - this.prevRpms[i]) / dt : 0))
-      : motors.map((m) => m.rpmRate);
+    const rates = this.rpmOverride ? rpms.map((r, i) => (dt > 0 ? (r - this.prevRpms[i]) / dt : 0)) : pt.rpmRates;
     const cam = this.cameras.renderCamera;
     const fwd = cam.getWorldDirection(new Vector3());
     const up = new Vector3(0, 1, 0).applyQuaternion(cam.quaternion);

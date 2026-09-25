@@ -116,7 +116,7 @@ export async function renderOffline(s: OfflineScenario): Promise<OfflineResult> 
       const frame: AudioFrame = {
         dt,
         rpms: pt.rpms,
-        rpmRates: pt.motors.motors.map((m) => m.rpmRate),
+        rpmRates: pt.rpmRates,
         driven: pt.driven,
         events,
         beacon: pt.power.beacon,

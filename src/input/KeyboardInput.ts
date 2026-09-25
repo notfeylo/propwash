@@ -15,6 +15,7 @@ const ACTIONS: InputAction[] = [
   'hideUi',
   'fullscreen',
   'settings',
+  'reset',
 ];
 
 /** Keyboard (PRD §4.7): W/S slew throttle (Shift = faster), 0 zeroes it, the rest are actions. */

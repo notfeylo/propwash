@@ -28,7 +28,9 @@ test('C cycles Orbit → FPV → HD → Orbit with the right overlays', async ({
   await page.waitForFunction(() => window.__propwash!.power().state === 'DISARMED', undefined, { timeout: 20_000 });
   await page.waitForFunction(() => window.__propwash!.camera().osd.includes('DISARMED'), undefined, { timeout: 5_000 });
   c = await cam(page);
-  expect(c.osd).toEqual(expect.arrayContaining(['RSSI 99', 'ACRO', '25.2V', '4.20V', '00:00']));
+  expect(c.osd).toEqual(expect.arrayContaining(['RSSI 99', 'ACRO', '25.2V', '00:00']));
+  // Cell average of a fresh 6S pack; the electronics' draw can sag it a few mV below 4.20.
+  expect(c.osd.some((l) => /^4\.(19|20)V$/.test(l))).toBe(true);
 
   await page.keyboard.press('KeyV');
   await page.waitForFunction(() => window.__propwash!.camera().feed === 'digital', undefined, { timeout: 5_000 });

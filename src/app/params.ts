@@ -1,3 +1,5 @@
+import type { WindPreset } from '../config/aero';
+import type { AirframeId } from '../config/airframes';
 import type { CameraMode, FeedStyle } from '../config/cameras';
 import type { BackgroundMode, QualityPreset } from '../config/render';
 
@@ -13,12 +15,18 @@ export interface AppParams {
   spinArrows: boolean;
   camera: CameraMode | null;
   feed: FeedStyle | null;
+  /** Flight physics (Phase 2); `?flight=0` keeps the Phase 1 bench model. */
+  flight: boolean;
+  airframe: AirframeId | null;
+  wind: WindPreset | null;
 }
 
 const PRESETS: readonly QualityPreset[] = ['low', 'medium', 'high', 'ultra'];
 const BACKGROUNDS: readonly BackgroundMode[] = ['gradient', 'hdri'];
 const CAMERA_MODES: readonly CameraMode[] = ['orbit', 'fpv', 'hd'];
 const FEEDS: readonly FeedStyle[] = ['analog', 'digital'];
+const AIRFRAME_IDS: readonly AirframeId[] = ['freestyle7', 'longrange7', 'longrange7_payload'];
+const WINDS: readonly WindPreset[] = ['calm', 'light', 'breezy'];
 
 export function readParams(search: string = window.location.search): AppParams {
   const p = new URLSearchParams(search);
@@ -35,5 +43,8 @@ export function readParams(search: string = window.location.search): AppParams {
     spinArrows: p.get('arrows') === '1',
     camera: cam && CAMERA_MODES.includes(cam) ? cam : null,
     feed: feed && FEEDS.includes(feed) ? feed : null,
+    flight: p.get('flight') !== '0',
+    airframe: AIRFRAME_IDS.find((a) => a === p.get('airframe')) ?? null,
+    wind: WINDS.find((w) => w === p.get('wind')) ?? null,
   };
 }

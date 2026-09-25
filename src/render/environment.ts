@@ -54,9 +54,10 @@ export async function createEnvironment(scene: Scene): Promise<Environment> {
 
   const hdriMode = uniform(0);
   // Fade by distance from the pad, not view depth: the set dissolves into the backdrop like a
-  // studio cove, and nothing near the drone is ever fogged.
-  const { startM, endM } = ENVIRONMENT.horizonFog;
-  const fade = smoothstep(float(startM), float(endM), length(positionWorld.xz));
+  // studio cove. Only the floor fades: anything above it (the drone in flight) never does.
+  const { startM, endM, floorBandM } = ENVIRONMENT.horizonFog;
+  const nearFloor = smoothstep(float(floorBandM[1]), float(floorBandM[0]), positionWorld.y);
+  const fade = smoothstep(float(startM), float(endM), length(positionWorld.xz)).mul(nearFloor);
   scene.fogNode = fog(mix(gradient, hdriBehind, hdriMode), fade);
 
   const env: Environment = {

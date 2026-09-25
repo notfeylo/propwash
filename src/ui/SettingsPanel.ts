@@ -60,6 +60,7 @@ const KEY_LABELS: Record<KeyAction, string> = {
   hideUi: 'Hide UI',
   fullscreen: 'Fullscreen',
   settings: 'Settings',
+  reset: 'Reset to launch pad',
   fast: 'Fast throttle modifier',
 };
 
@@ -206,7 +207,7 @@ export class SettingsPanel {
       ${this.field('Stick deadzone', '', this.range('deadzone', 0, 0.3, 0.01))}
       ${this.field('Stick expo', '', this.range('expo', 0, 1, 0.05))}
       ${this.field('Rumble', 'Chrome desktop', this.check('rumble'))}
-      <div class="pw-pad-t"><b>R1</b>arm / disarm<b>L1 + R1</b>kill<b>Options (hold)</b>battery<b>△ / □</b>camera / feed<b>○</b>beacon<b>Touchpad</b>motor test<b>Share</b>payload</div>
+      <div class="pw-pad-t"><b>R1</b>arm / disarm<b>L1 + R1</b>kill<b>Options (hold)</b>battery<b>△ / □</b>camera / feed<b>○</b>beacon<b>Touchpad</b>motor test<b>Share</b>payload<b>D-pad ↓</b>reset to pad</div>
       <h3>RC RADIO</h3>
       <button type="button" class="pw-btn" data-a="calibrate">CALIBRATE RADIO…</button>
       <h3>KEYBOARD <small style="letter-spacing:0">(click, then press a key)</small></h3>
