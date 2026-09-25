@@ -1,0 +1,7 @@
+# CLI deploys: never upload unlicensed or generated files (git deploys only see committed files)
+assets-src/audio/*.mp3
+public/models/*.glb
+public/audio/*.wav
+public/audio/*.m4a
+node_modules
+dist

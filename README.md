@@ -2,7 +2,7 @@
 
 Open-source, browser-based FPV drone simulator built for realism. Three.js WebGPU + Web Audio.
 
-**Live:** https://propwash.vercel.app
+**Live:** https://propwash-sim.vercel.app
 
 <!-- Hero GIF (plug → arm → throttle sweep → FPV → disarm) lands with the Phase 1 verification pass. -->
 
