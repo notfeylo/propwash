@@ -82,11 +82,26 @@ The HUD (top left) shows the power state, battery, per-motor RPM, camera, device
 
 ## Verification
 
-- `pnpm test`: unit tests (blend continuity, aliasing, vibration bounds, antenna stability, quality picker, motor dynamics, power states, battery, audio mapping, loop seam).
+- `pnpm test`: unit tests, including the Flight Lab (`tests/unit/flight.test.ts`; `FLIGHT_LAB_REPORT=<file>` writes its measurements), blend continuity, aliasing, vibration bounds, antenna stability, quality picker, motor dynamics, power states, battery, audio mapping, loop seam).
 - `pnpm test:e2e`: smoke test, rig checks, the power flow through the real keyboard, camera cycling, and a simulated DualShock 4 (plug, arm, throttle, kill, rumble).
 - `pnpm verify:visual [url]`: renders the §4.9 screenshots into `docs/verification/`, including every camera view. Set `CHANNEL=chrome` to use an installed Chrome with WebGPU.
 - `pnpm verify:audio [url] [--clips]`: renders bench sessions offline and measures the §4.9 audio criteria into `docs/verification/audio/`. Runs in CI on the procedural path.
 - `window.__propwash` (see `src/app/debug.ts`) drives all of the above: freeze/step the sim clock, set RPM or rotor angles, plug/arm/throttle, toggle arrows, payload and LEDs, render audio offline, and project world points to pixels.
+
+## Flight physics (`src/sim/flight`, Phase 2 PRD §1–§2)
+
+```
+pilot / FC ──cmd[4]──▶ Powertrain (power + arming) ──inputs──▶ FlightSim.advance(dt)   1 kHz fixed step, ≤ 8 per frame
+  each step:
+  FlightMotors   ω' = (ω_cmd − ω)/τ,  ω_cmd = ω_idle + (ω_max(V_loaded) − ω_idle)·cmd
+  FlightBattery  V = V_ocv(SoC) − I·R,  I = Σ(Q·ω)/(η·V)   (solved exactly)
+  forces         thrust (inflow fade, ground effect) + H-force at each rotor, body drag, gravity
+  torques        r × F, reaction Q + rotor-inertia kick (yaw), rotor gyroscopic, angular damping
+  Rapier         resetForces → addForce / addTorque → world.step   (explicit mass, CoM, inertia)
+render ◀── interpolated pose (previous ⇄ current state), per-motor RPM, V / I / mAh
+```
+
+`src/sim` has no three.js or DOM imports and runs headless in Vitest. Constants live in `src/config/airframes/*.ts` (SI units), `src/config/aero.ts` and `src/config/physics.ts`. `src/sim/frames.ts` is the only place axis conventions convert: three.js body axes ↔ flight axes (roll right, pitch nose-down and yaw right are positive). All noise comes from seeded streams (`src/sim/rng.ts`), so a seed plus an input log replays bit-identically. Rapier (the deterministic build) is imported after the first frame; until then, and with `?flight=0`, the Phase 1 bench model drives the props.
 
 ## Powertrain (`src/sim`, PRD §4.4)
 
