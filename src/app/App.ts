@@ -42,6 +42,8 @@ export class App {
   throttleOverride: number | null = null;
   /** When frozen, the simulation clock stops but frames keep rendering (for screenshots). */
   simFrozen = false;
+  /** Tests: keep input + sim + audio running each frame but skip drawing (software GL is slow). */
+  renderPaused = false;
   /** Power events from the last frame (debug/HUD). */
   lastEvents: PowerEvent[] = [];
   private prevRpms = [0, 0, 0, 0];
@@ -192,7 +194,7 @@ export class App {
     this.updateLeds();
     this.audio.update(this.audioFrame(simDt, rpms));
     this.prevRpms = [...rpms];
-    this.post.render();
+    if (!this.renderPaused) this.post.render();
   }
 
   /** FC LED: solid when powered, blinking when armed. VTX LED: red while booting, then green. */

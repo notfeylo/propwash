@@ -66,6 +66,8 @@ export interface DebugHandle {
   renderAudio(scenario: OfflineScenario): Promise<RenderedAudio>;
   /** Set every rotor (or each, M1..M4) to an absolute angle in degrees. */
   setRotorAngles(deg: number | number[]): void;
+  /** Skip drawing but keep input, sim and audio running (for sim tests on software GL). */
+  setRenderPaused(paused: boolean): void;
   /** Stop the simulation clock (rendering continues); step() advances it. */
   freeze(frozen: boolean): void;
   step(dtS: number): void;
@@ -162,6 +164,7 @@ export function exposeDebug(app: App): void {
     },
     setRotorAngles: (deg) => drone.rotors.forEach((r, i) => r.setAngle(each(deg, i) * DEG)),
     freeze: (f) => (app.simFrozen = f),
+    setRenderPaused: (p) => (app.renderPaused = p),
     step: (dt) => app.step(dt),
     setSpinArrows: (v) => drone.setSpinArrowsVisible(v),
     setPayloadVisible: (v) => drone.setPayloadVisible(v),
