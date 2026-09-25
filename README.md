@@ -4,9 +4,9 @@ Open-source, browser-based FPV drone simulator built for realism. Three.js WebGP
 
 **Live:** https://propwash-sim.vercel.app
 
-<!-- Hero GIF (plug → arm → throttle sweep → FPV → disarm) lands with the Phase 1 verification pass. -->
+![Plug in, arm, throttle sweep, FPV analog and digital, HD view, disarm](docs/media/propwash.gif)
 
-> **Status: Phase 1, "Alive on the Bench," in progress.** You can plug in the battery, hear the ESC tones, arm, and spool the props with procedural motor audio. The FPV/HD cameras, gamepad/RC input, and the HUD are next. It does not fly yet.
+> **Status: Phase 1, "Alive on the Bench," is complete.** Plug in the battery, hear the ESC tones, arm, and spool the props with procedural motor audio. Look through the FPV camera (analog or digital, with a Betaflight-style OSD) or the HD action cam, run the motor test, and use a keyboard, PS4/PS5 controller or USB RC radio. It does not fly yet; that's Phase 2. The acceptance checks are in [`docs/verification/`](docs/verification/README.md).
 
 ## Run it locally
 

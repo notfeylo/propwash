@@ -1,4 +1,4 @@
-/* global window, requestAnimationFrame, performance */
+/* global window, requestAnimationFrame */
 // tools/verify-budgets.mjs — `pnpm verify:budgets [baseUrl]`
 // Measures the PRD §4.2 budgets and the §4.9 FPV shake into docs/verification/budgets.md:
 // initial download and first frame on a throttled 50 Mbps link, frame times at 1440p on High,
