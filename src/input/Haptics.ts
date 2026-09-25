@@ -25,6 +25,7 @@ export class Haptics {
     const idle = weak < 0.005 && strong === 0;
     if (idle && this.lastWeak < 0.005 && this.lastStrong === 0) return;
     const pulseStarted = strong > 0 && this.lastStrong === 0;
+    if (strong > 0 && !pulseStarted) return; // the pulse was sent with its full duration
     if (!pulseStarted && nowMs - this.lastSent < HAPTICS.refreshMs) return;
     this.lastSent = nowMs;
     this.lastWeak = weak;

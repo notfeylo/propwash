@@ -1,8 +1,9 @@
+import { GAMEPAD, RADIO } from '../config/input';
 import { GamepadInput } from './GamepadInput';
 import { Haptics } from './Haptics';
 import { KeyboardInput } from './KeyboardInput';
 import { RadioInput } from './RadioInput';
-import { type ControlState, type DeviceFrame, type InputDevice, type PadSnapshot } from './types';
+import { type ControlState, type DeviceFrame, type InputAction, type InputDevice, type PadSnapshot } from './types';
 
 export type PadListener = (
   event: 'connected' | 'disconnected',
@@ -32,6 +33,8 @@ export class InputManager {
   readonly pads = new Map<number, GamepadInput | RadioInput>();
   onDevice?: PadListener;
   private lastState: ControlState | null = null;
+  private time = 0;
+  private recent = new Map<InputAction, { index: number; t: number }>();
 
   constructor(
     target: Window = window,
@@ -55,11 +58,13 @@ export class InputManager {
   }
 
   poll(dt: number): ControlState {
+    this.time += dt;
     const frames: { kind: InputDevice; name: string; index: number; f: DeviceFrame }[] = [];
     frames.push({ kind: 'keyboard', name: 'Keyboard', index: -1, f: this.keyboard.poll(dt) });
 
     const seen = new Set<number>();
     for (const pad of this.getPads()) {
+      if (pad.mapping !== 'standard' && RADIO.ignore.test(pad.id)) continue;
       seen.add(pad.index);
       let dev = this.pads.get(pad.index);
       if (!dev || dev.id !== pad.id) {
@@ -87,12 +92,24 @@ export class InputManager {
       roll: src.f.roll,
       arm: src.f.arm,
       kill: frames.some((d) => d.f.kill),
-      actions: frames.flatMap((d) => d.f.actions),
+      actions: frames.flatMap((d) => (d.index < 0 ? d.f.actions : d.f.actions.filter((a) => this.fresh(a, d.index)))),
       device: this.device,
       deviceName: this.deviceName,
     };
     this.lastState = state;
     return state;
+  }
+
+  /**
+   * Drop an action that another pad sent moments ago. Remappers such as DS4Windows expose one
+   * physical controller twice (the real pad plus a virtual Xbox pad), and a toggle seen from
+   * both would arm and instantly disarm.
+   */
+  private fresh(action: InputAction, index: number): boolean {
+    const r = this.recent.get(action);
+    if (r && r.index !== index && this.time - r.t < GAMEPAD.duplicateWindowS) return false;
+    this.recent.set(action, { index, t: this.time });
+    return true;
   }
 
   private setActive(kind: InputDevice, name: string, index: number): void {

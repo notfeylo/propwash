@@ -59,8 +59,8 @@ export const GAMEPAD = {
   /** Stick deadzone (radial, per stick) and expo (0 = linear, 1 = cubic). */
   deadzone: 0.08,
   expo: 0.3,
-  /** Trigger deadzone so a resting R2 reads exactly 0. */
-  triggerDeadzone: 0.02,
+  /** Trigger deadzone: a finger resting on a DS4's R2 reads 0.05–0.07, which must stay 0%. */
+  triggerDeadzone: 0.08,
   /** A button counts as pressed above this (analog triggers report 0..1). */
   pressThreshold: 0.5,
   /** Options must be held this long to plug / unplug the battery. */
@@ -75,6 +75,8 @@ export const GAMEPAD = {
     motorTest: PAD.touchpad,
     payloadToggle: PAD.share,
   },
+  /** The same action from a second pad within this window is a duplicate (DS4Windows, Steam Input). */
+  duplicateWindowS: 0.25,
   /** Movement that counts as "using the pad" for the active-device switch. */
   activityThreshold: 0.2,
 };
@@ -98,4 +100,6 @@ export const RADIO = {
   /** Switch channels above this are "on". */
   switchOn: 0.5,
   deadzone: 0.02,
+  /** Non-standard devices that are not radios (wheels, pedals): ignored, never offered calibration. */
+  ignore: /wheel|pedal|driving force|shifter/i,
 };

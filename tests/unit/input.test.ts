@@ -53,7 +53,7 @@ describe('GamepadInput (PS4 bindings, PRD §4.7)', () => {
     expect(g.poll(pad(), dt).throttle).toBe(0);
     expect(g.poll(pad({ values: { [PAD.r2]: 1 } }), dt).throttle).toBeCloseTo(1);
     expect(g.poll(pad({ values: { [PAD.r2]: 0.51 } }), dt).throttle).toBeCloseTo(0.5, 1);
-    expect(g.poll(pad({ values: { [PAD.r2]: 0.01 } }), dt).throttle).toBe(0);
+    expect(g.poll(pad({ values: { [PAD.r2]: 0.07 } }), dt).throttle).toBe(0); // finger resting on R2
   });
 
   it('R1 toggles arm on the press edge only; L1+R1 is kill', () => {
@@ -210,10 +210,59 @@ describe('InputManager', () => {
     expect(m.poll(dt).device).toBe('keyboard'); // unplugged: back to the keyboard
   });
 
+  it('ignores the duplicate of a press from a remapper virtual pad', () => {
+    let pads: PadSnapshot[] = [];
+    const target = new EventTarget() as unknown as Window;
+    const m = new InputManager(target, () => pads);
+    const xbox = (pressed: number[]) => ({
+      ...pad({ pressed }, 'Xbox 360 Controller (XInput STANDARD GAMEPAD)'),
+      index: 1,
+    });
+    pads = [pad(), xbox([])];
+    m.poll(dt);
+    pads = [pad({ pressed: [PAD.r1] }), xbox([])];
+    expect(m.poll(dt).actions).toEqual(['armToggle']);
+    pads = [pad({ pressed: [PAD.r1] }), xbox([PAD.r1])]; // the virtual pad, one frame late
+    expect(m.poll(dt).actions).toEqual([]);
+    pads = [pad(), xbox([])];
+    for (let i = 0; i < 30; i++) m.poll(dt);
+    pads = [pad(), xbox([PAD.r1])]; // a real, later press on the other pad counts
+    expect(m.poll(dt).actions).toEqual(['armToggle']);
+  });
+
+  it('ignores racing wheels instead of offering radio calibration', () => {
+    const target = new EventTarget() as unknown as Window;
+    const wheel = pad({}, 'G920 Driving Force Racing Wheel for Xbox One (Vendor: 046d Product: c262)', '');
+    const m = new InputManager(target, () => [{ ...wheel, index: 1 }, pad()]);
+    m.poll(dt);
+    expect(m.uncalibratedRadios.length).toBe(0);
+    expect([...m.pads.keys()]).toEqual([0]);
+  });
+
   it('treats non-standard pads as radios that need calibration', () => {
     const target = new EventTarget() as unknown as Window;
     const m = new InputManager(target, () => [pad({}, 'Some RC Joystick', '')]);
     m.poll(dt);
     expect(m.uncalibratedRadios.length).toBe(1);
+  });
+});
+
+describe('Haptics', () => {
+  it('sends a strong pulse once, then resumes the weak rumble', async () => {
+    const { Haptics } = await import('../../src/input/Haptics');
+    const calls: Record<string, number>[] = [];
+    const p = {
+      ...pad(),
+      vibrationActuator: {
+        playEffect: (_: string, e: Record<string, number>) => (calls.push(e), Promise.resolve('complete')),
+      },
+    };
+    const h = new Haptics();
+    h.pulse(0, 300);
+    for (let t = 0; t <= 600; t += 16) h.update(p, t, 0.5);
+    const strong = calls.filter((c) => c.strongMagnitude > 0);
+    expect(strong.length).toBe(1);
+    expect(strong[0].duration).toBe(300);
+    expect(calls.at(-1)!.weakMagnitude).toBeGreaterThan(0);
   });
 });
