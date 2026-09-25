@@ -35,7 +35,7 @@ jobs:
           pnpm preview --port 4173 --strictPort &
           for i in $(seq 1 30); do curl -sf http://localhost:4173 > /dev/null && break; sleep 1; done
           pnpm verify:audio http://localhost:4173
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright
