@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 import sharp from 'sharp';
 
 test('page loads, drone renders, no console errors', async ({ page }) => {
+  // Default URL, so the auto-picked preset starts at High: slow under CI's software renderer.
+  test.setTimeout(120_000);
   const errors: string[] = [];
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(e.message));

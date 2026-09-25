@@ -6,6 +6,8 @@ const baseURL = process.env.BASE_URL ?? 'http://localhost:4173';
 export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 60_000,
+  // CI renders in software (no GPU): one page at a time, or frames starve each other.
+  workers: process.env.CI ? 1 : undefined,
   use: { baseURL, viewport: { width: 1280, height: 720 } },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: process.env.BASE_URL
