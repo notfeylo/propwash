@@ -23,6 +23,7 @@ import { KeyboardInput } from '../input/KeyboardInput';
 import { Powertrain } from '../sim/Powertrain';
 import type { PowerEvent } from '../sim/PowerStateMachine';
 import { mountAudioPrompt } from '../ui/AudioPrompt';
+import { armBlockedMessage, Toast } from '../ui/Toast';
 import { readParams } from './params';
 import { exposeDebug } from './debug';
 
@@ -44,6 +45,7 @@ export class App {
   simFrozen = false;
   /** Tests: keep input + sim + audio running each frame but skip drawing (software GL is slow). */
   renderPaused = false;
+  readonly toast: Toast;
   /** Power events from the last frame (debug/HUD). */
   lastEvents: PowerEvent[] = [];
   private prevRpms = [0, 0, 0, 0];
@@ -99,6 +101,7 @@ export class App {
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => (document.hidden ? this.stop() : this.start()));
     mountAudioPrompt(this.audio);
+    this.toast = new Toast();
     this.resize();
   }
 
@@ -187,6 +190,7 @@ export class App {
     }
     pt.throttle = this.throttleOverride ?? controls.throttle;
     this.lastEvents = pt.update(simDt);
+    for (const e of this.lastEvents) if (e.type === 'armRefused') this.toast.show(armBlockedMessage(e.reason));
 
     const rpms = this.rpmOverride ?? pt.rpms;
     this.drone.setRpm(rpms);

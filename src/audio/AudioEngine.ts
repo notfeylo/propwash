@@ -167,7 +167,8 @@ export class AudioEngine {
         for (const v of this.voices) v.startSpoolDown();
         break;
       case 'armRefused':
-        this.beeper.buzz(bz.refused.freqHz, now, bz.refused.durationS);
+        // An unpowered flight controller can't beep.
+        if (e.reason !== 'NO POWER') this.beeper.buzz(bz.refused.freqHz, now, bz.refused.durationS);
         break;
       case 'beacon':
         this.nextBeacon = now;

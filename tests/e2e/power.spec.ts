@@ -86,3 +86,29 @@ test('procedural audio renders offline (the public build has no recording)', asy
   expect(20 * Math.log10(rms)).toBeLessThan(-3);
   expect(r.frames.some((f) => f.events.includes('escPowerOnTones'))).toBe(true);
 });
+
+test('arm presses that are refused say why; unplugged ones are silent', async ({ page }) => {
+  const toast = page.locator('.pw-toast.pw-show');
+  await page.keyboard.press('Space');
+  await expect(toast).toContainText('Battery unplugged');
+  expect((await power(page)).state).toBe('OFF');
+
+  await page.keyboard.press('KeyP');
+  await page.keyboard.press('Space');
+  await expect(toast).toContainText('ESCs starting');
+  await waitState(page, 'DISARMED');
+  await page.keyboard.down('KeyW');
+  await page.waitForFunction(() => window.__propwash!.power().throttle > 0.1, undefined, { timeout: 10_000 });
+  await page.keyboard.up('KeyW');
+  await page.keyboard.press('Space');
+  await expect(toast).toContainText('throttle above 5%');
+
+  // No buzzer from an unpowered flight controller.
+  const r = await page.evaluate(() =>
+    window.__propwash!.renderAudio({ durationS: 0.8, steps: [{ at: 0.1, do: 'arm' }] }),
+  );
+  const pcm = Buffer.from(r.left, 'base64');
+  const i16 = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2);
+  expect(i16.every((v) => v === 0)).toBe(true);
+  expect(r.frames.some((f) => f.events.includes('armRefused'))).toBe(true);
+});
