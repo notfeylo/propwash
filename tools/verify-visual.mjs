@@ -29,7 +29,10 @@ page.on('pageerror', (e) => errors.push(e.message));
 async function open(query = '') {
   await page.goto(`${BASE}/?quality=high&dynres=0${query}`);
   await page.waitForFunction(() => window.__propwash?.ready === true, undefined, { timeout: 60_000 });
-  await page.evaluate(() => window.__propwash.freeze(true));
+  await page.evaluate(() => {
+    window.__propwash.freeze(true);
+    window.__propwash.setUiHidden(true); // HUD off (H); the OSD stays, it's part of the video
+  });
 }
 /** Let TRAA converge on a static frame. */
 const settle = (ms = 900) => page.waitForTimeout(ms);
