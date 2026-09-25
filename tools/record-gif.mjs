@@ -3,6 +3,8 @@
 // Renders a GIF of a scripted session. Scenarios:
 //   bench   (default) Phase 1 README GIF: plug → arm → throttle sweep → FPV → disarm, 20 s, bench model.
 //   liftoff Phase 2 group 1: arm and lift off the pad open loop (no flight controller), calm air.
+//   flip    Phase 2 group 2: FPV (digital feed), Horizon mode: climb, roll flip, front flip, all through
+//           the flight controller (full stick flips; centred sticks self-level).
 // The sim clock is frozen and stepped exactly one GIF frame per capture, so the result is smooth
 // however slowly frames are captured. Needs a running server, ffmpeg (FFMPEG_PATH) and, for
 // real WebGPU, CHANNEL=chrome. FRAMES=<dir> keeps the frames and reuses them to retune the encode.
@@ -80,6 +82,48 @@ const SCENARIOS = {
   },
 };
 
+SCENARIOS.flip = {
+  out: 'docs/media/phase2-flip-fpv.gif',
+  seconds: 9,
+  query: '?quality=ultra&dynres=0&wind=calm&airframe=freestyle7&cam=fpv&feed=digital',
+  gif: { width: 640, fps: 15, colors: 128 },
+  hide: '.pw-audio, .pw-keys, .pw-input, .pw-hud, .pw-hud-tools',
+  async setup(page) {
+    await page.waitForFunction(() => window.__propwash.flight() !== null, undefined, { timeout: 60_000 });
+    await page.evaluate(() => {
+      window.__propwash.setFlightMode('horizon');
+      window.__propwash.plug();
+    });
+    await page.waitForFunction(() => window.__propwash.power().state === 'DISARMED', undefined, { timeout: 20_000 });
+  },
+  /** Low over the pad: climb, then pop up and flip with the throttle eased off, like a pilot does. */
+  throttleAt(t) {
+    const steps = [
+      [0.8, 0],
+      [1.25, null],
+      [1.8, 0.2],
+      [2.9, 0.262],
+      [3.15, 0.45],
+      [3.75, 0.15],
+      [4.3, 0.32],
+      [5.45, 0.266],
+      [5.7, 0.45],
+      [6.25, 0.15],
+      [6.8, 0.32],
+      [Infinity, 0.262],
+    ];
+    for (const [end, v] of steps) if (t < end) return v ?? 0.4 * ramp(t, 0.8, 0.95);
+    return 0.262;
+  },
+  sticksAt(t) {
+    const roll = t >= 3.2 && t < 3.2 + 8 / 15 ? 1 : 0;
+    const pitch = t >= 5.7 && t < 5.7 + 8 / 15 ? 1 : 0;
+    return { roll, pitch, yaw: 0 };
+  },
+  events: [[0.3, 'arm']],
+  view: () => ({ position: [0.42, 0.26, 0.5] }),
+};
+
 const name = process.argv[3] ?? 'bench';
 const S = SCENARIOS[name];
 if (!S) throw new Error(`unknown scenario "${name}" (${Object.keys(SCENARIOS).join(', ')})`);
@@ -129,13 +173,14 @@ if (!reuse) {
       }
     }
     await d(
-      ({ view, thr }) => {
+      ({ view, thr, sticks }) => {
         const p = window.__propwash;
         if (p.camera().mode === 'orbit') p.setView(view.position, view.target, view.fov);
         p.setThrottle(thr);
+        if (sticks) p.setSticks(sticks);
         p.step(1 / 15);
       },
-      { view: S.view(t), thr: S.throttleAt(t) },
+      { view: S.view(t), thr: S.throttleAt(t), sticks: S.sticksAt ? S.sticksAt(t) : null },
     );
     await page.waitForTimeout(90); // step lands on the next frame; let TRAA settle a little
     await page.screenshot({ path: path.join(tmp, `f${String(f).padStart(4, '0')}.png`) });
