@@ -19,7 +19,8 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "verify:visual": "node tools/verify-visual.mjs"
   },
   "dependencies": {
     "three": "0.186.1"

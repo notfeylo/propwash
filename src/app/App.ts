@@ -1,7 +1,6 @@
 import {
   AgXToneMapping,
   Box3,
-  Group,
   PCFShadowMap,
   PerspectiveCamera,
   Scene,
@@ -10,8 +9,9 @@ import {
   WebGPURenderer,
 } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { PROP_BLEND } from '../config/drone';
 import { QUALITY, RENDER, type QualityPreset } from '../config/render';
-import { loadDrone } from '../drone/loadDrone';
+import { DroneModel } from '../drone/DroneModel';
 import { createBench } from '../render/bench';
 import { createEnvironment, type Environment } from '../render/environment';
 import { aimKeyLight, createKeyLight, setShadowMapSize } from '../render/lighting';
@@ -25,10 +25,14 @@ export class App {
   readonly camera: PerspectiveCamera;
   readonly controls: OrbitControls;
   readonly quality: QualityController;
-  readonly droneRoot = new Group();
+  drone!: DroneModel;
   environment!: Environment;
+  /** When frozen, the simulation clock stops but frames keep rendering (for screenshots). */
+  simFrozen = false;
+  private pendingStep = 0;
   private post: PostPipeline;
   private key;
+  private padTopY = 0;
   private timer = new Timer();
   private running = false;
 
@@ -72,8 +76,6 @@ export class App {
     this.post = new PostPipeline(renderer, this.scene, this.camera);
     this.post.build(QUALITY[this.quality.preset]);
 
-    this.droneRoot.name = 'drone_root';
-    this.scene.add(this.droneRoot);
     this.timer.connect(document);
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => (document.hidden ? this.stop() : this.start()));
@@ -83,16 +85,20 @@ export class App {
   private async load(): Promise<void> {
     const params = readParams();
     const bench = createBench();
+    this.padTopY = bench.padTopY;
     this.scene.add(bench.group);
-    const [env, drone] = await Promise.all([createEnvironment(this.scene), loadDrone()]);
+    const [env, drone] = await Promise.all([createEnvironment(this.scene), DroneModel.load()]);
     this.environment = env;
     if (params.background) env.setBackground(params.background);
 
-    this.droneRoot.add(drone);
-    // Rest the lowest visible part on the pad.
-    const box = new Box3().setFromObject(drone);
-    this.droneRoot.position.y = bench.padTopY - box.min.y;
-    const center = new Box3().setFromObject(this.droneRoot).getCenter(new Vector3());
+    this.drone = drone;
+    this.scene.add(drone.root);
+    drone.onGroundOffsetChange = (offset) => (drone.root.position.y = this.padTopY + offset);
+    drone.root.position.y = this.padTopY + drone.groundOffset;
+    drone.setSpinArrowsVisible(params.spinArrows);
+    if (params.rpm !== null) drone.setRpm(params.rpm);
+
+    const center = new Box3().setFromObject(drone.body).getCenter(new Vector3());
     this.controls.target.copy(center);
     this.controls.update();
     aimKeyLight(this.key, center);
@@ -120,7 +126,7 @@ export class App {
     if (this.running) return;
     this.running = true;
     this.timer.reset();
-    void this.renderer.setAnimationLoop((t) => this.frame(t));
+    void this.renderer.setAnimationLoop(() => this.frame());
   }
 
   stop(): void {
@@ -128,16 +134,21 @@ export class App {
     void this.renderer.setAnimationLoop(null);
   }
 
-  /** Advance simulation-side state by dt seconds. */
-  update(dt: number): void {
-    this.controls.update(dt);
+  /** Advance the frozen simulation by dt on the next frame. */
+  step(dt: number): void {
+    this.pendingStep += dt;
   }
 
-  private frame(timestamp: number): void {
-    this.timer.update(timestamp);
-    const dt = Math.min(this.timer.getDelta(), RENDER.maxFrameDtS);
+  private frame(): void {
+    this.timer.update();
+    // Clamp both ways: long gaps (tab switch) and clock-base mismatches on the first frame.
+    const dt = Math.min(Math.max(this.timer.getDelta(), 0), RENDER.maxFrameDtS);
     this.quality.update(dt);
-    this.update(dt);
+    this.controls.update(dt);
+
+    const simDt = this.simFrozen ? this.pendingStep : dt;
+    this.pendingStep = 0;
+    this.drone.update(simDt, this.simFrozen ? PROP_BLEND.nominalFrameDtS : dt);
     this.post.render();
   }
 

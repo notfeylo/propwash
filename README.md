@@ -6,7 +6,7 @@ Open-source, browser-based FPV drone simulator built for realism. Three.js WebGP
 
 <!-- Hero GIF (plug → arm → throttle sweep → FPV → disarm) lands with the Phase 1 verification pass. -->
 
-> **Status: Phase 1, "Alive on the Bench," in progress.** The drone model loads and renders. Power-up, ESC tones, arming, prop spool, motor audio, and the FPV/HD cameras are being built now. It does not fly yet.
+> **Status: Phase 1, "Alive on the Bench," in progress.** The bench scene and drone rig are in: props spin about their motor axes and blend from real blades to smear to blur disc by RPM. Power-up, ESC tones, arming, prop spool, motor audio, and the FPV/HD cameras are being built now. It does not fly yet.
 
 ## Run it locally
 

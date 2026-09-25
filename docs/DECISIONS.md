@@ -45,3 +45,23 @@ A floor edge dithered with alpha hash showed as a noisy band at the horizon. Ins
 ## 2026-09-24 · Auto quality can't see headroom above the refresh rate
 
 Frame time is measured from requestAnimationFrame, which is vsync-capped. On a 60 Hz display a fast GPU and a just-keeping-up GPU both measure ~16.7 ms and get High. Ultra is only auto-picked when frames come faster than 9 ms (high-refresh displays). Settings can override it (Task 8), and `?quality=` does today.
+
+## 2026-09-24 · Canister straps hide with the payload
+
+`tools/split-drone.mjs` (verified, not to be rewritten) leaves the canister's two mounting straps in `body`. Hiding the payload left them dangling to the pad, and they set the PRD's "frame bottom ≈ −0.004 m". `DroneModel` finds those loose parts at load (body parts inside the canister's footprint that reach below `DRONE.payloadStrapBelowY`, 528 tris) and toggles them with the canister. The `.glb` and the §4.1 tri counts are unchanged. With the payload hidden, the lowest point is now the bottom plate at +0.052 m, so the frame rests on the pad.
+
+## 2026-09-24 · Hub and blades split at runtime by radius
+
+§4.3 says to fade the real prop mesh, but the rotor mesh also holds the bell, adapter and nut, which must stay solid and visibly spin. At load, `Rotor` splits each rotor's triangles by distance from the motor axis (`DRONE.hubRadiusM`, 17 mm: every hub vertex is inside 15 mm, and blades reach 89 mm) into hub and blade meshes that share vertex buffers. Only the blades fade, ghost and turn into the disc.
+
+## 2026-09-24 · Translucent prop layers don't write velocity
+
+Velocity is an MRT attachment blended with each material's blending. Smear ghosts and the blur disc turn fast, so they stamped rotor motion onto whatever they covered, and TRAA then reprojected those surfaces from the wrong place (the canister behind a prop looked washed out). Those materials write velocity with alpha 0 (`src/drone/velocity.ts`), which keeps the velocity of the surface behind. Fading blades use the same override only while they're translucent.
+
+## 2026-09-24 · Faded layers cast dithered shadows
+
+Blade, ghost and disc shadows are masked in the shadow pass by a hash compared with each layer's opacity (`maskShadowNode`). A blade's shadow thins out as the blade fades instead of popping off, and the disc casts a faint shadow as §4.3 allows.
+
+## 2026-09-24 · Blur disc gets a sheen lift
+
+At the measured coverage (0.18), a dark carbon disc over the dark pad was nearly invisible, so the prop seemed to vanish when the smear handed off to the disc around 2,300–2,600 RPM. Blending scales the disc's lit specular by its alpha too, which removes the glints that make real blurred props visible. The disc color adds `PROP_DISC.sheenLift` (the time-averaged blade glints) to the sampled prop color. Coverage stays at the physical value.
