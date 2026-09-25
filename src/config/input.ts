@@ -20,6 +20,7 @@ export const KEYBOARD = {
     payloadToggle: ['KeyL'],
     hideUi: ['KeyH'],
     fullscreen: ['KeyF'],
+    settings: ['KeyO'],
     fast: ['ShiftLeft', 'ShiftRight'],
   },
 };

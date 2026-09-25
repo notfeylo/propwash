@@ -138,3 +138,15 @@ A radio's arm switch is a position, not a button. Flipping it on sends an arm re
 ## 2026-09-25 · Weak rumble follows the square root of motor load
 
 Mapping the weak motor linearly to average RPM / rpmMax made idle (2,400 RPM, ≈7%) imperceptible. The square root gives idle a faint hum and full throttle `HAPTICS.weakMax`. Strong pulses mark the ESC tones (a longer buzz), arming, disarming and a refused arm. Rumble goes only to the active pad, so a controller lying on the desk stays quiet while someone uses the keyboard.
+
+## 2026-09-25 · Motor test runs disarmed, like Betaflight's Motors tab
+
+§4.8 models the panel on the Betaflight Configurator Motors tab, where motors spin while the craft is disarmed and arming is blocked. The powertrain drives each motor from its slider only while the battery is plugged in, the drone is disarmed, the panel is open and the safety box is ticked. A 0% slider is stopped, not idle. Closing the panel, unticking the box or unplugging lets the motors coast. Arming while the test is on is refused with a toast. Audio and battery load treat test spinning as driven.
+
+## 2026-09-25 · Settings persist per browser and override config defaults
+
+Settings (§4.8) start from the values in `src/config/*` and save to `localStorage` (session-only when storage is blocked). Stored values are merged key by key and type-checked, so a stale or hand-edited entry can't break startup. A `?quality=` URL parameter still wins over the saved preset, so tests and screenshots stay deterministic. Keyboard bindings are rebindable; binding a key removes it from any other action. Gamepad bindings are fixed to the §4.7 table (a reference is shown), with the throttle source, stick hold, deadzone, expo and rumble adjustable.
+
+## 2026-09-25 · Settings gets the O key
+
+§4.7's key table has no settings key. O opens and closes Settings (Escape closes either panel). The HUD also has MOTORS and SETTINGS buttons. Like the rest of the HUD they hide in the FPV and HD views, but the keys and the touchpad work in every view.

@@ -117,7 +117,7 @@ export async function renderOffline(s: OfflineScenario): Promise<OfflineResult> 
         dt,
         rpms: pt.rpms,
         rpmRates: pt.motors.motors.map((m) => m.rpmRate),
-        driven: pt.power.armed,
+        driven: pt.driven,
         events,
         beacon: pt.power.beacon,
         lowBattery: pt.power.powered && pt.battery.lowWarning,

@@ -22,7 +22,7 @@ Click the page (or press any key) to start audio; browsers block sound until you
 
 ## Controls
 
-Keyboard, PS4 / PS5 controllers (Chrome's standard mapping) and USB RC radios all work, and you can switch between them at any time: throttle and sticks follow whichever device you touched last. The motor test panel lands with the settings UI.
+Keyboard, PS4 / PS5 controllers (Chrome's standard mapping) and USB RC radios all work, and you can switch between them at any time: throttle and sticks follow whichever device you touched last.
 
 | Action                    | Keyboard                         | Gamepad (PS4 / PS5) |
 | ------------------------- | -------------------------------- | ------------------- |
@@ -35,6 +35,7 @@ Keyboard, PS4 / PS5 controllers (Chrome's standard mapping) and USB RC radios al
 | Motor test panel          | M                                | Touchpad            |
 | Payload toggle            | L                                | Share / Create      |
 | Hide UI / fullscreen      | H / F                            | —                   |
+| Settings                  | O                                | —                   |
 | Orbit, zoom, pan          | Mouse drag, wheel, right-drag    | —                   |
 
 USB RC radios (EdgeTX / OpenTX in joystick mode) show up as non-standard gamepads. Press **Calibrate radio** in the input widget (bottom right) and the wizard detects each stick's axis, endpoints and direction, plus your arm switch. The calibration is saved in the browser. Controllers rumble in Chrome: the weak motor follows motor load, and the ESC tones and arming give short pulses.

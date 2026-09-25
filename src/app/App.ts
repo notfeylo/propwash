@@ -12,7 +12,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CameraDirector } from '../cameras/CameraDirector';
 import type { AudioFrame, Vec3 } from '../audio/AudioEngine';
 import { LiveAudio } from '../audio/LiveAudio';
-import { DRONE, LEDS, PROP_BLEND } from '../config/drone';
+import { DRONE, LEDS, MODEL_CREDIT, PROP_BLEND } from '../config/drone';
 import { QUALITY, RENDER, type QualityPreset } from '../config/render';
 import { DroneModel } from '../drone/DroneModel';
 import { createBench } from '../render/bench';
@@ -29,9 +29,13 @@ import type { PowerEvent } from '../sim/PowerStateMachine';
 import { mountAudioPrompt } from '../ui/AudioPrompt';
 import { OsdOverlay } from '../ui/OSD';
 import { CalibrationWizard } from '../ui/CalibrationWizard';
+import { Hud } from '../ui/Hud';
 import { InputVisualizer } from '../ui/InputVisualizer';
+import { MotorTestPanel, type MotorTestStatus } from '../ui/MotorTestPanel';
+import { SettingsPanel } from '../ui/SettingsPanel';
 import { armBlockedMessage, Toast } from '../ui/Toast';
 import { readParams } from './params';
+import { applyConfigSettings, loadSettings, saveSettings, type Settings } from './settings';
 import { exposeDebug } from './debug';
 
 export class App {
@@ -55,6 +59,12 @@ export class App {
   uiHidden = false;
   /** Last frame's control state (debug / HUD). */
   controlState: ControlState | null = null;
+  settings: Settings;
+  readonly hud: Hud;
+  readonly motorPanel: MotorTestPanel;
+  readonly settingsPanel: SettingsPanel;
+  /** Smoothed frames per second (HUD, when enabled). */
+  fps = 0;
   readonly audio = new LiveAudio();
   /** Debug/verification: fixed prop RPM instead of the motor model (null = model). */
   rpmOverride: number[] | null = null;
@@ -90,6 +100,8 @@ export class App {
     readonly renderer: WebGPURenderer,
   ) {
     const params = readParams();
+    this.settings = loadSettings();
+    applyConfigSettings(this.settings);
     renderer.toneMapping = AgXToneMapping;
     renderer.toneMappingExposure = RENDER.exposure;
     renderer.shadowMap.enabled = true;
@@ -107,7 +119,7 @@ export class App {
     this.controls.autoRotateSpeed = orbit.autoRotateSpeed;
 
     this.quality = new QualityController({
-      forced: params.quality,
+      forced: params.quality ?? (this.settings.quality === 'auto' ? null : this.settings.quality),
       dynamicResolution: params.dynamicResolution,
       onPreset: (p) => this.applyPreset(p),
       onScale: () => this.resize(),
@@ -130,6 +142,17 @@ export class App {
     this.toast = new Toast();
     this.inputViz = new InputVisualizer();
     this.inputViz.onCalibrate = () => this.calibrateRadio();
+    this.hud = new Hud();
+    this.motorPanel = new MotorTestPanel();
+    this.settingsPanel = new SettingsPanel(this.settings, MODEL_CREDIT);
+    this.hud.onMotors = () => this.toggleMotorPanel();
+    this.hud.onSettings = () => this.toggleSettings();
+    this.settingsPanel.onCalibrate = () => this.calibrateRadio();
+    this.settingsPanel.onChange = (s) => {
+      this.settings = s;
+      this.applySettings();
+      saveSettings(s);
+    };
     this.input.onDevice = (event, d) => {
       if (event === 'disconnected') return this.toast.show(`<b>${d.name}</b> disconnected`, 2000);
       if (d.kind === 'gamepad')
@@ -166,6 +189,7 @@ export class App {
     aimKeyLight(this.key, center);
 
     this.cameras.attach(drone);
+    this.applySettings();
     if (params.camera) this.cameras.setMode(params.camera, true);
     if (params.feed) this.cameras.setFeed(params.feed);
 
@@ -174,6 +198,39 @@ export class App {
     this.post.warmUp();
     drone.update(0);
     exposeDebug(this);
+  }
+
+  /** Push the current settings into the live objects (config-level values are applied too). */
+  applySettings(): void {
+    const s = this.settings;
+    applyConfigSettings(s);
+    if (this.drone && this.drone.payload.visible !== s.payload) this.drone.setPayloadVisible(s.payload);
+    this.cameras.setFeed(s.feed);
+    this.cameras.setUptilt(s.uptiltDeg);
+    this.cameras.jello = s.jello;
+    this.cameras.whipPan = s.whipPan;
+    this.audio.setVolume(s.volume);
+    this.input.throttleSource = s.throttleSource;
+    this.input.throttleHold = s.throttleHold;
+    this.input.haptics.enabled = s.rumble;
+    // A ?quality= URL override (tests, screenshots) wins over the saved preset.
+    if (!readParams().quality) this.quality.force(s.quality === 'auto' ? null : s.quality);
+  }
+
+  /** Mirror a change made outside the panel (keys, pad) into the saved settings. */
+  private remember(p: Partial<Settings>): void {
+    this.settingsPanel.patch(p);
+    saveSettings(this.settings);
+  }
+
+  toggleMotorPanel(open = !this.motorPanel.open): void {
+    if (open) this.settingsPanel.setOpen(false);
+    this.motorPanel.setOpen(open);
+  }
+
+  toggleSettings(open = !this.settingsPanel.open): void {
+    if (open) this.motorPanel.setOpen(false);
+    this.settingsPanel.setOpen(open);
   }
 
   applyPreset(preset: QualityPreset): void {
@@ -228,6 +285,8 @@ export class App {
     this.controlState = controls;
     for (const a of controls.actions) {
       if (a === 'plugToggle') pt.togglePlug();
+      else if ((a === 'armToggle' || a === 'arm') && !pt.power.armed && pt.motorTest.enabled)
+        this.toast.show('Motor test is on: close it to arm', 2000);
       else if (a === 'armToggle') pt.toggleArm();
       else if (a === 'arm') {
         if (!pt.power.armed) pt.arm();
@@ -235,15 +294,20 @@ export class App {
         if (pt.power.armed) pt.disarm();
       } else if (a === 'kill') pt.kill();
       else if (a === 'beaconToggle') pt.toggleBeacon();
-      else if (a === 'payloadToggle') this.drone.setPayloadVisible(!this.drone.payload.visible);
-      else if (a === 'cameraCycle') this.cameras.cycle();
+      else if (a === 'payloadToggle') {
+        this.drone.setPayloadVisible(!this.drone.payload.visible);
+        this.remember({ payload: this.drone.payload.visible });
+      } else if (a === 'cameraCycle') this.cameras.cycle();
       else if (a === 'feedCycle') this.cycleFeed();
       else if (a === 'hideUi') this.setUiHidden(!this.uiHidden);
       else if (a === 'fullscreen') toggleFullscreen();
-      else if (a === 'motorTest') this.toast.show('Motor test panel: not built yet', 1600);
+      else if (a === 'motorTest') this.toggleMotorPanel();
+      else if (a === 'settings') this.toggleSettings();
     }
     if (controls.kill && pt.power.armed) pt.kill();
     pt.throttle = this.throttleOverride ?? controls.throttle;
+    pt.motorTest.enabled = this.motorPanel.open && this.motorPanel.safety;
+    for (let i = 0; i < 4; i++) pt.motorTest.values[i] = this.motorPanel.values[i];
     this.lastEvents = pt.update(simDt);
     for (const e of this.lastEvents)
       if (e.type === 'armRefused') this.toast.show(armBlockedMessage(e.reason, controls.device));
@@ -262,7 +326,37 @@ export class App {
     this.drawOsd();
     this.inputViz.visible = !this.uiHidden && this.cameras.mode === 'orbit';
     this.inputViz.update(controls, pt.power.armed, this.input.uncalibratedRadios.length > 0);
+    this.updatePanels(dt, rpms, controls);
     if (!this.renderPaused) this.post.render();
+  }
+
+  private updatePanels(dt: number, rpms: readonly number[], controls: ControlState): void {
+    if (dt > 0) this.fps += (1 / dt - this.fps) * Math.min(1, dt * 2);
+    const pt = this.powertrain;
+    const p = pt.power;
+    const cam =
+      this.cameras.mode === 'fpv' ? `FPV ${this.cameras.feed.toUpperCase()}` : this.cameras.mode.toUpperCase();
+    this.hud.update({
+      state: p.state,
+      testing: pt.testing,
+      voltage: pt.battery.voltage,
+      cellVoltage: pt.battery.cellVoltage,
+      usedMah: pt.battery.usedMah,
+      soc: pt.battery.soc,
+      lowBattery: p.powered && pt.battery.lowWarning,
+      rpms,
+      camera: cam,
+      device: controls.deviceName,
+      fps: this.settings.showFps ? Math.round(this.fps) : null,
+    });
+    const status: MotorTestStatus = !p.powered
+      ? 'unpowered'
+      : p.state === 'BOOTING'
+        ? 'booting'
+        : p.armed
+          ? 'armed'
+          : 'ready';
+    this.motorPanel.update(status, rpms);
   }
 
   setUiHidden(hidden: boolean): void {
@@ -303,6 +397,7 @@ export class App {
   /** V: analog / digital. Outside FPV it cuts straight to the FPV view in the new style. */
   cycleFeed(): void {
     this.cameras.cycleFeed();
+    this.remember({ feed: this.cameras.feed });
     if (this.cameras.mode !== 'fpv') this.cameras.setMode('fpv');
     this.toast.show(`FPV feed: <b>${this.cameras.feed === 'analog' ? 'Analog' : 'Digital HD'}</b>`, 1400);
   }
@@ -363,7 +458,7 @@ export class App {
       dt,
       rpms,
       rpmRates: rates,
-      driven: pt.power.armed,
+      driven: pt.driven,
       events: this.lastEvents,
       beacon: pt.power.beacon,
       lowBattery: pt.power.powered && pt.battery.lowWarning,

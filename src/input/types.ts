@@ -11,7 +11,8 @@ export type InputAction =
   | 'motorTest'
   | 'payloadToggle'
   | 'hideUi'
-  | 'fullscreen';
+  | 'fullscreen'
+  | 'settings';
 
 export type InputDevice = 'keyboard' | 'gamepad' | 'radio';
 

@@ -10,6 +10,8 @@ export type LiveAudioState = 'idle' | 'starting' | 'running' | 'suspended' | 'un
 export class LiveAudio {
   state: LiveAudioState = 'idle';
   engine: AudioEngine | null = null;
+  /** Master volume 0..1 (settings); applied when the engine starts, too. */
+  private volume = 1;
   private ctx: AudioContext | null = null;
   private listeners = new Set<(s: LiveAudioState) => void>();
 
@@ -45,6 +47,7 @@ export class LiveAudio {
       });
       await this.ctx.resume();
       this.engine = await AudioEngine.create(this.ctx, { loadClips: true });
+      this.setVolume(this.volume);
       this.setState(this.ctx.state === 'running' ? 'running' : 'suspended');
     } catch (err) {
       console.warn('Audio unavailable:', err);
@@ -67,6 +70,11 @@ export class LiveAudio {
       this.pausedByApp = false;
       void this.ctx.resume();
     }
+  }
+
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v));
+    this.engine?.setMasterDb(this.volume > 0 ? 20 * Math.log10(this.volume) : -Infinity);
   }
 
   update(frame: AudioFrame): void {

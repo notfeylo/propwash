@@ -39,6 +39,21 @@ export class QualityController {
     this.picked = opts.forced !== null;
   }
 
+  /** Settings: a fixed preset stops the auto-pick; null re-runs it from the next frames. */
+  force(preset: QualityPreset | null): void {
+    if (preset === null) {
+      this.picked = false;
+      this.frame = 0;
+      this.samples = [];
+      return;
+    }
+    this.picked = true;
+    if (preset !== this.preset) {
+      this.preset = preset;
+      this.opts.onPreset(preset);
+    }
+  }
+
   update(dtS: number): void {
     const ms = dtS * 1000;
     this.frame++;

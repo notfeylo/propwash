@@ -6,10 +6,17 @@ const DEG = Math.PI / 180;
 
 type Vec3 = [number, number, number];
 
+/** The model credit, verbatim from CREDITS.md (CC-BY-4.0 attribution; also shown in Settings → Credits). */
+export const MODEL_CREDIT =
+  'This work is based on "FPV-dron_NonStop" (https://sketchfab.com/3d-models/fpv-dron-nonstop-c75dea6e3ae441ac87f292efb17f5bae) by Viktor_ (https://sketchfab.com/Viktor.Zhuravlev) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)';
+
 export const DRONE = {
   modelUrl: '/models/drone.glb',
   /** Betaflight motor order M1..M4. */
   rotorNames: ['rotor_RR', 'rotor_FR', 'rotor_RL', 'rotor_FL'] as const,
+  /** Spin (from above) and position per motor, M1..M4 (PRD §2.1, props-in). */
+  motorSpin: ['CW', 'CCW', 'CCW', 'CW'] as const,
+  motorPosition: ['Rear-Right', 'Front-Right', 'Rear-Left', 'Front-Left'] as const,
   propRadiusM: 0.0889,
   bladeCount: 3,
   /** Rotor vertices farther than this from the motor axis are prop blades; the rest is the bell/hub. */

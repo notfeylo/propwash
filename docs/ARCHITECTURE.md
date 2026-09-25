@@ -76,6 +76,10 @@ navigator.getGamepads(): mapping 'standard' → GamepadInput, anything else → 
 
 `GamepadInput` maps the §4.7 PS4 bindings: R2 throttle (or Mode 2 stick with optional hold), R1 arm toggle, L1+R1 kill, Options held 0.6 s for the battery. `RadioCalibrator` is the pure wizard logic (rest pose, then per channel the axis that travelled furthest, its endpoints and direction, then the arm switch), and `CalibrationWizard` is its UI. `InputVisualizer` shows the active device and live Mode 2 gimbals.
 
+## UI (`src/ui`, PRD §4.8)
+
+The HUD (top left) shows the power state, battery, per-motor RPM, camera, device and an optional FPS counter. The Motor Test Panel (M or touchpad) sets `Powertrain.motorTest`, which drives motors individually while disarmed. Settings (O) edits a `Settings` object (`src/app/settings.ts`) that is applied live, written back into the config objects the sim, audio and input read, and saved to `localStorage`. The OSD, input widget and panels share one instrument-panel style (`src/ui/style.ts`). The HUD and input widget stay out of the FPV and HD views.
+
 ## Verification
 
 - `pnpm test`: unit tests (blend continuity, aliasing, vibration bounds, antenna stability, quality picker, motor dynamics, power states, battery, audio mapping, loop seam).

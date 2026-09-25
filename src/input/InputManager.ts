@@ -1,4 +1,5 @@
 import { GAMEPAD, RADIO } from '../config/input';
+import type { ThrottleSource } from '../config/input';
 import { GamepadInput } from './GamepadInput';
 import { Haptics } from './Haptics';
 import { KeyboardInput } from './KeyboardInput';
@@ -32,6 +33,9 @@ export class InputManager {
   activeIndex = -1;
   readonly pads = new Map<number, GamepadInput | RadioInput>();
   onDevice?: PadListener;
+  /** Settings: pad throttle source and stick hold, applied to every standard pad. */
+  throttleSource: ThrottleSource = GAMEPAD.throttleSource;
+  throttleHold = GAMEPAD.throttleHold;
   private lastState: ControlState | null = null;
   private time = 0;
   private recent = new Map<InputAction, { index: number; t: number }>();
@@ -72,6 +76,10 @@ export class InputManager {
         dev = pad.mapping === 'standard' ? new GamepadInput(pad.id) : new RadioInput(pad.id);
         this.pads.set(pad.index, dev);
         this.onDevice?.('connected', { kind: kindOf(dev), name: dev.name, index: pad.index });
+      }
+      if (dev instanceof GamepadInput) {
+        dev.throttleSource = this.throttleSource;
+        dev.throttleHold = this.throttleHold;
       }
       const f = dev instanceof GamepadInput ? dev.poll(pad, dt) : dev.poll(pad);
       frames.push({ kind: kindOf(dev), name: dev.name, index: pad.index, f });

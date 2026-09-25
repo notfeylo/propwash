@@ -13,8 +13,11 @@ export class Powertrain {
   readonly battery = new Battery();
   /** Commanded throttle, 0..1. */
   throttle = 0;
-  /** Motor test panel overrides (0..1 throttle per motor), or null to follow the master throttle. */
-  motorOverride: (number | null)[] = [null, null, null, null];
+  /**
+   * Motor test (Betaflight Motors tab): while enabled and the drone is powered but disarmed, each
+   * motor runs at its own 0..1 command (0 = stopped, not idle). Arming is blocked meanwhile.
+   */
+  readonly motorTest = { enabled: false, values: [0, 0, 0, 0] };
 
   constructor(
     seed?: number,
@@ -31,11 +34,29 @@ export class Powertrain {
     this.power.togglePlug();
   }
 
-  toggleArm(): void {
-    this.power.toggleArm({ throttle: this.throttle });
+  /** Motors are spinning under the motor test (powered, disarmed, test enabled). */
+  get testing(): boolean {
+    return this.motorTest.enabled && this.power.powered && !this.power.armed;
   }
 
+  /** ESCs are driving the motors (armed, or the motor test). */
+  get driven(): boolean {
+    return this.power.armed || this.testing;
+  }
+
+  setMotorTest(enabled: boolean): void {
+    this.motorTest.enabled = enabled;
+    if (!enabled) this.motorTest.values.fill(0);
+  }
+
+  toggleArm(): void {
+    if (this.power.armed) this.power.disarm();
+    else this.arm();
+  }
+
+  /** Refused (false) while the motor test is on, like Betaflight while its Motors tab is open. */
   arm(): boolean {
+    if (this.motorTest.enabled) return false;
     return this.power.arm({ throttle: this.throttle });
   }
 
@@ -67,11 +88,15 @@ export class Powertrain {
       }
     }
     const v = this.battery.connected ? this.battery.voltage : 0;
-    const targets = this.motors.motors.map((_, i) =>
-      this.power.armed ? targetRpm(this.motorOverride[i] ?? this.throttle, v) : 0,
-    );
+    const testing = this.testing;
+    if (!this.power.armed) this.motors.setDrive(testing ? 'driven' : 'coast');
+    const targets = this.motors.motors.map((_, i) => {
+      if (this.power.armed) return targetRpm(this.throttle, v);
+      const t = this.motorTest.values[i];
+      return testing && t > 0 ? targetRpm(t, v) : 0;
+    });
     this.motors.update(dt, targets);
-    this.battery.update(dt, this.rpms, this.power.armed);
+    this.battery.update(dt, this.rpms, this.driven);
     return events;
   }
 }

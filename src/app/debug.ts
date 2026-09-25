@@ -103,6 +103,11 @@ export interface DebugHandle {
   /** Last frame's normalized input (PRD §4.7) and the connected pads. */
   input(): { state: ControlState | null; pads: { index: number; kind: string; name: string; calibrated: boolean }[] };
   openCalibration(): void;
+  /** Motor test panel (PRD §4.8): open/close, safety, and a slider (index −1 = master). */
+  motorTest(open: boolean, safety?: boolean): void;
+  setMotorSlider(index: number, value: number): void;
+  openSettings(open: boolean): void;
+  settings(): unknown;
   setUiHidden(hidden: boolean): void;
   /** World point → CSS pixel in the canvas, through the active view (before the barrel). */
   project(world: Vec3): [number, number];
@@ -230,6 +235,13 @@ export function exposeDebug(app: App): void {
       })),
     }),
     openCalibration: () => app.calibrateRadio(),
+    motorTest(open, safety) {
+      app.toggleMotorPanel(open);
+      if (safety !== undefined) app.motorPanel.setSafety(safety);
+    },
+    setMotorSlider: (i, v) => app.motorPanel.set(i, v),
+    openSettings: (open) => app.toggleSettings(open),
+    settings: () => JSON.parse(JSON.stringify(app.settings)),
     setUiHidden: (h) => app.setUiHidden(h),
     setCamera: (mode, instant) => app.cameras.setMode(mode, instant),
     setFeed: (feed) => app.cameras.setFeed(feed),
