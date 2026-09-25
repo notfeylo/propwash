@@ -98,3 +98,19 @@ Tasks 4–5 can't be tried without plugging in, arming and throttling, so the §
 ## 2026-09-24 · First spin-up hitch: warm the prop pipelines at load
 
 The first arm froze for ≈290 ms at ≈400 RPM, when the blades switched to their translucent variant and the ghosts and disc first drew, compiling new GPU pipelines mid-frame (the sim then lost time to the 100 ms dt clamp). At load the rig now renders those variants once at zero opacity. The velocity MRT override is also a single shared node, because pipelines are keyed by node identity and a fresh node recompiled on every fade. The worst frame from arm to full throttle is now 18–30 ms.
+
+## 2026-09-25 · Camera feeds render at the screen's aspect and crop the video box
+
+§4.6 asks for a 4:3 analog and 16:9 digital/HD feed. Rendering the scene at the feed's aspect doesn't survive TRAA: its sub-pixel jitter calls `camera.setViewOffset`, which resets `camera.aspect` to the drawing buffer's every frame. So one render camera always matches the screen, and its FOV is set so the feed's video box (pillar- or letterboxed) spans the lens's horizontal FOV (125° FPV, 118° HD). The final camera-look pass crops that box, applies the barrel, and paints the bars black. On a 16:9 screen the 4:3 analog feed renders ≈25% of pixels that end up in the bars; in exchange pixels map 1:1 and every view shares one TRAA/GTAO/Bloom chain.
+
+## 2026-09-25 · Barrel normalized on the diagonal
+
+The ≈155° fisheye look is a barrel pass over the 125° rectilinear render. Normalizing it so the horizontal edge stays put pushed the corners outside the render and left black corners on a 4:3 frame. It is normalized on the diagonal instead: corners map to corners, the centre is magnified and straight lines bow. The horizontal field shrinks a little (≈121° at the analog frame's edge), which reads closer to real FPV cameras that crop inside the image circle.
+
+## 2026-09-25 · Unpowered FPV shows goggle "NO SIGNAL" over snow
+
+§4.4 says unplugging leaves the OSD at "NO SIGNAL" static. With the VTX off there's no OSD from the flight controller, so the view shows what goggles do: analog snow (digital: black) with a centred "NO SIGNAL". The OSD returns once the battery is plugged in. The HD camera is self-powered, like a GoPro, so it keeps recording while the drone is off.
+
+## 2026-09-25 · Camera cuts don't reset TRAA history
+
+A 150 ms cut dips through black and switches views at its midpoint. TRAA's history isn't cleared at the switch (three r186 has no public reset; forcing one reallocates render targets, a hitch). Reprojection with the new camera's velocity rejects nearly all old samples, and what's left is under the fade.

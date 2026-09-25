@@ -1,4 +1,5 @@
 import type { App } from './App';
+import type { CameraMode, FeedStyle } from '../config/cameras';
 import type { BackgroundMode, QualityPreset } from '../config/render';
 import type { FcLedMode, VtxLedMode } from '../drone/LEDs';
 import type { PropWeights } from '../drone/propBlend';
@@ -41,6 +42,21 @@ export interface RenderedAudio {
   frames: { t: number; state: string; throttle: number; rpms: number[]; events: string[]; warning: string | null }[];
 }
 
+export interface CameraInfo {
+  mode: CameraMode;
+  feed: FeedStyle;
+  uptiltDeg: number;
+  cutting: boolean;
+  /** Video area in CSS px. */
+  box: { x: number; y: number; width: number; height: number };
+  /** Render camera: world position, vertical FOV (deg), aspect. */
+  position: Vec3;
+  fovDeg: number;
+  aspect: number;
+  /** OSD text currently drawn (one element per entry). */
+  osd: string[];
+}
+
 export interface DebugHandle {
   ready: boolean;
   backend: 'webgpu' | 'webgl2';
@@ -76,7 +92,14 @@ export interface DebugHandle {
   setLeds(fc: FcLedMode, vtx: VtxLedMode, rearStrip: boolean): void;
   rotors(): RotorInfo[];
   groundOffset(): number;
-  /** World point → CSS pixel in the canvas (for annotating screenshots). */
+  /** Camera views (PRD §4.6). `instant` skips the 150 ms cut. */
+  setCamera(mode: CameraMode, instant?: boolean): void;
+  setFeed(feed: FeedStyle): void;
+  setUptilt(deg: number): void;
+  setJello(enabled: boolean): void;
+  setWhipPan(enabled: boolean): void;
+  camera(): CameraInfo;
+  /** World point → CSS pixel in the canvas, through the active view (before the barrel). */
   project(world: Vec3): [number, number];
 }
 
@@ -192,14 +215,34 @@ export function exposeDebug(app: App): void {
         };
       }),
     groundOffset: () => drone.groundOffset,
+    setCamera: (mode, instant) => app.cameras.setMode(mode, instant),
+    setFeed: (feed) => app.cameras.setFeed(feed),
+    setUptilt: (deg) => app.cameras.setUptilt(deg),
+    setJello: (on) => (app.cameras.jello = on),
+    setWhipPan: (on) => (app.cameras.whipPan = on),
+    camera() {
+      const c = app.cameras;
+      const r = c.renderCamera;
+      return {
+        mode: c.mode,
+        feed: c.feed,
+        uptiltDeg: c.uptiltDeg,
+        cutting: c.cutting,
+        box: c.videoBox,
+        position: [r.position.x, r.position.y, r.position.z],
+        fovDeg: r.fov,
+        aspect: r.aspect,
+        osd: [...app.osd.lines],
+      };
+    },
     project(world) {
-      app.camera.updateMatrixWorld();
-      const v = app.camera.position
+      const cam = app.cameras.renderCamera;
+      const v = cam.position
         .clone()
         .set(...world)
-        .project(app.camera);
-      const { clientWidth: w, clientHeight: h } = app.renderer.domElement;
-      return [((v.x + 1) / 2) * w, ((1 - v.y) / 2) * h];
+        .project(cam);
+      const b = app.cameras.videoBox;
+      return [b.x + ((v.x + 1) / 2) * b.width, b.y + ((1 - v.y) / 2) * b.height];
     },
   };
 }

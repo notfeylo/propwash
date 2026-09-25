@@ -169,6 +169,11 @@ export class DroneModel {
     this.updateGroundOffset();
   }
 
+  /** Current frame vibration, 0..1 of the peak at rpmMax. */
+  get vibrationIntensity(): number {
+    return this.vibration.intensity;
+  }
+
   setRpm(rpm: number | readonly number[]): void {
     this.rotors.forEach((r, i) => (r.rpm = typeof rpm === 'number' ? rpm : (rpm[i] ?? 0)));
   }

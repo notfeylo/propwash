@@ -9,6 +9,7 @@ import {
   WebGPURenderer,
 } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CameraDirector } from '../cameras/CameraDirector';
 import type { AudioFrame, Vec3 } from '../audio/AudioEngine';
 import { LiveAudio } from '../audio/LiveAudio';
 import { LEDS, PROP_BLEND } from '../config/drone';
@@ -17,20 +18,29 @@ import { DroneModel } from '../drone/DroneModel';
 import { createBench } from '../render/bench';
 import { createEnvironment, type Environment } from '../render/environment';
 import { aimKeyLight, createKeyLight, setShadowMapSize } from '../render/lighting';
+import { LookUniforms } from '../render/cameraLook';
 import { PostPipeline } from '../render/pipeline';
 import { QualityController } from '../render/quality';
 import { KeyboardInput } from '../input/KeyboardInput';
 import { Powertrain } from '../sim/Powertrain';
 import type { PowerEvent } from '../sim/PowerStateMachine';
 import { mountAudioPrompt } from '../ui/AudioPrompt';
+import { OsdOverlay } from '../ui/OSD';
 import { armBlockedMessage, Toast } from '../ui/Toast';
 import { readParams } from './params';
 import { exposeDebug } from './debug';
 
 export class App {
   readonly scene = new Scene();
+  /** The orbit/inspect camera (OrbitControls drives it). */
   readonly camera: PerspectiveCamera;
   readonly controls: OrbitControls;
+  readonly cameras: CameraDirector;
+  readonly osd: OsdOverlay;
+  /** Betaflight fly time: seconds armed since the battery was plugged in. */
+  armedTimeS = 0;
+  /** HD view recording time (starts when the view is entered). */
+  recTimeS = 0;
   readonly quality: QualityController;
   drone!: DroneModel;
   environment!: Environment;
@@ -94,12 +104,18 @@ export class App {
       onScale: () => this.resize(),
     });
     this.key = createKeyLight(this.scene, QUALITY[this.quality.preset].shadowMapSize);
-    this.post = new PostPipeline(renderer, this.scene, this.camera);
+    const look = new LookUniforms();
+    this.cameras = new CameraDirector(this.camera, this.controls, look, (kind) => this.post.setView(kind));
+    this.cameras.onChange = (mode) => {
+      if (mode === 'hd') this.recTimeS = 0;
+    };
+    this.post = new PostPipeline(renderer, this.scene, this.cameras.renderCamera, look);
     this.post.build(QUALITY[this.quality.preset]);
 
     this.timer.connect(document);
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => (document.hidden ? this.stop() : this.start()));
+    this.osd = new OsdOverlay(container);
     mountAudioPrompt(this.audio);
     this.toast = new Toast();
     this.resize();
@@ -126,9 +142,13 @@ export class App {
     this.controls.update();
     aimKeyLight(this.key, center);
 
-    // Compile the translucent prop variants now, not on the first spin-up.
+    this.cameras.attach(drone);
+    if (params.camera) this.cameras.setMode(params.camera, true);
+    if (params.feed) this.cameras.setFeed(params.feed);
+
+    // Compile the translucent prop variants and every camera look now, not mid-flight.
     drone.warmUp();
-    this.post.render();
+    this.post.warmUp();
     drone.update(0);
     exposeDebug(this);
   }
@@ -138,6 +158,7 @@ export class App {
     const q = QUALITY[preset];
     setShadowMapSize(this.key, q.shadowMapSize);
     this.post.build(q);
+    this.post.warmUp();
     this.resize();
   }
 
@@ -146,8 +167,8 @@ export class App {
     const dpr = Math.min(window.devicePixelRatio, QUALITY[this.quality.preset].maxPixelRatio);
     this.renderer.setPixelRatio(dpr * this.quality.scale);
     this.renderer.setSize(w, h);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.cameras.resize(w, h);
+    this.osd.resize(w, h);
   }
 
   start(): void {
@@ -187,6 +208,8 @@ export class App {
       else if (a === 'kill') pt.kill();
       else if (a === 'beaconToggle') pt.toggleBeacon();
       else if (a === 'payloadToggle') this.drone.setPayloadVisible(!this.drone.payload.visible);
+      else if (a === 'cameraCycle') this.cameras.cycle();
+      else if (a === 'feedCycle') this.cycleFeed();
     }
     pt.throttle = this.throttleOverride ?? controls.throttle;
     this.lastEvents = pt.update(simDt);
@@ -196,9 +219,51 @@ export class App {
     this.drone.setRpm(rpms);
     this.drone.update(simDt, this.simFrozen ? PROP_BLEND.nominalFrameDtS : dt);
     this.updateLeds();
+    this.cameras.update(dt, { fpvSignal: pt.power.powered, vibration: this.drone.vibrationIntensity });
     this.audio.update(this.audioFrame(simDt, rpms));
     this.prevRpms = [...rpms];
+    if (this.lastEvents.some((e) => e.type === 'plugged')) this.armedTimeS = 0;
+    if (pt.power.armed) this.armedTimeS += simDt;
+    this.recTimeS += dt;
+    this.drawOsd();
     if (!this.renderPaused) this.post.render();
+  }
+
+  /** V: analog / digital. Outside FPV it cuts straight to the FPV view in the new style. */
+  cycleFeed(): void {
+    this.cameras.cycleFeed();
+    if (this.cameras.mode !== 'fpv') this.cameras.setMode('fpv');
+    this.toast.show(`FPV feed: <b>${this.cameras.feed === 'analog' ? 'Analog' : 'Digital HD'}</b>`, 1400);
+  }
+
+  private drawOsd(): void {
+    const pt = this.powertrain;
+    const p = pt.power;
+    let warning: string | null = null;
+    if (p.powered) {
+      if (p.warning === 'THROTTLE') warning = 'THROTTLE';
+      else if (p.state === 'BOOTING') warning = 'BOOTING';
+      else if (pt.battery.lowWarning) warning = 'LOW BATTERY';
+      else if (p.beacon) warning = 'BEACON ON';
+    }
+    this.osd.draw(
+      {
+        mode: this.cameras.mode,
+        feed: this.cameras.feed,
+        powered: p.powered,
+        armed: p.armed,
+        voltage: pt.battery.voltage,
+        cellVoltage: pt.battery.cellVoltage,
+        usedMah: pt.battery.usedMah,
+        armedTimeS: this.armedTimeS,
+        throttle: pt.throttle,
+        warning,
+        recTimeS: this.recTimeS,
+        fade: this.cameras.fade,
+        time: performance.now() / 1000,
+      },
+      this.cameras.videoBox,
+    );
   }
 
   /** FC LED: solid when powered, blinking when armed. VTX LED: red while booting, then green. */
@@ -220,7 +285,7 @@ export class App {
     const rates = this.rpmOverride
       ? rpms.map((r, i) => (dt > 0 ? (r - this.prevRpms[i]) / dt : 0))
       : motors.map((m) => m.rpmRate);
-    const cam = this.camera;
+    const cam = this.cameras.renderCamera;
     const fwd = cam.getWorldDirection(new Vector3());
     const up = new Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
     return {
@@ -241,8 +306,8 @@ export class App {
         forward: [fwd.x, fwd.y, fwd.z],
         up: [up.x, up.y, up.z],
       },
-      cameraMode: 'orbit',
-      distance: cam.position.distanceTo(this.controls.target),
+      cameraMode: this.cameras.mode === 'orbit' ? 'orbit' : 'fpv',
+      distance: this.cameras.mode === 'orbit' ? cam.position.distanceTo(this.controls.target) : 0,
     };
   }
 

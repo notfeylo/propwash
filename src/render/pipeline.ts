@@ -1,24 +1,40 @@
 import { type Camera, type Node, RenderPipeline, type Scene, type WebGPURenderer } from 'three/webgpu';
-import { builtinAOContext, mrt, normalView, output, pass, screenUV, velocity } from 'three/tsl';
+import {
+  builtinAOContext,
+  convertToTexture,
+  mrt,
+  normalView,
+  output,
+  pass,
+  renderOutput,
+  screenUV,
+  velocity,
+} from 'three/tsl';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import { traa } from 'three/addons/tsl/display/TRAANode.js';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { POST, type QualitySettings } from '../config/render';
+import { cameraLook, type LookKind, LookUniforms } from './cameraLook';
 
 /**
  * Scene pass (MRT: color, velocity; depth) with GTAO from an opaque normal/depth prepass
- * applied to indirect light only → TRAA → Bloom → AgX tone map + sRGB (pipeline output transform).
+ * applied to indirect light only → TRAA → Bloom → AgX tone map + sRGB → the active camera's
+ * look (FPV analog/digital, HD, or plain orbit), which works in display space like a video feed.
  */
 export class PostPipeline {
   readonly pipeline: RenderPipeline;
+  view: LookKind = 'orbit';
+  private views = new Map<LookKind, Node>();
   private disposables: { dispose(): void }[] = [];
 
   constructor(
     renderer: WebGPURenderer,
     private scene: Scene,
     private camera: Camera,
+    readonly look: LookUniforms = new LookUniforms(),
   ) {
     this.pipeline = new RenderPipeline(renderer);
+    this.pipeline.outputColorTransform = false; // tone map before the camera look
   }
 
   build(q: QualitySettings): void {
@@ -59,8 +75,27 @@ export class PostPipeline {
       this.disposables.push(glow);
       out = aa.add(glow);
     }
-    this.pipeline.outputNode = out;
+    const ldr = convertToTexture(renderOutput(out));
+    this.views.clear();
+    for (const kind of ['orbit', 'analog', 'digital', 'hd'] as LookKind[])
+      this.views.set(kind, cameraLook(ldr, this.look, kind));
+    this.setView(this.view);
+  }
+
+  setView(kind: LookKind): void {
+    this.view = kind;
+    this.pipeline.outputNode = this.views.get(kind)!;
     this.pipeline.needsUpdate = true;
+  }
+
+  /** Render every view once so switching cameras never compiles shaders mid-flight. */
+  warmUp(): void {
+    const current = this.view;
+    for (const kind of this.views.keys()) {
+      this.setView(kind);
+      this.pipeline.render();
+    }
+    this.setView(current);
   }
 
   render(): void {

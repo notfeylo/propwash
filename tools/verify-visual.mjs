@@ -217,6 +217,34 @@ await shot(
   text(20, 40, `payload + straps hidden · lowest point ${mm(-withPayload)} → ${mm(-offset)} mm (body frame)`),
 );
 
+// 7. Camera views (§4.6): FPV with no signal, analog and digital feeds with the OSD and the
+// props in frame, and the HD view with its REC indicator. The sim runs live here.
+await open();
+await d(() => {
+  const p = window.__propwash;
+  p.freeze(false);
+  p.setCamera('fpv', true);
+});
+await settle(1200);
+await shot('camera-fpv-no-signal.jpg');
+await d(() => window.__propwash.plug());
+await page.waitForFunction(() => window.__propwash.power().state === 'DISARMED', undefined, { timeout: 20_000 });
+await settle(1200);
+await shot('camera-fpv-analog-disarmed.jpg');
+await d(() => {
+  const p = window.__propwash;
+  p.arm();
+  p.setThrottle(0.3);
+});
+await settle(2500);
+await shot('camera-fpv-analog-armed.jpg');
+await d(() => window.__propwash.setFeed('digital'));
+await settle(1200);
+await shot('camera-fpv-digital-armed.jpg');
+await d(() => window.__propwash.setCamera('hd', true));
+await settle(1200);
+await shot('camera-hd.jpg');
+
 const backend = await d(() => window.__propwash.backend);
 console.log(`backend: ${backend}`);
 await browser.close();

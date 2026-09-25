@@ -11,6 +11,8 @@ export const KEYBOARD = {
     throttleUp: ['KeyW'],
     throttleDown: ['KeyS'],
     throttleZero: ['Digit0', 'Numpad0'],
+    cameraCycle: ['KeyC'],
+    feedCycle: ['KeyV'],
     beaconToggle: ['KeyB'],
     payloadToggle: ['KeyL'],
     fast: ['ShiftLeft', 'ShiftRight'],

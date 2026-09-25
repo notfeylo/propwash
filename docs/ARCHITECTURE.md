@@ -29,8 +29,10 @@ Spin only the pivot nodes. Optimizers re-center mesh nodes during quantization, 
 
 ```
 opaque prepass (normals, depth) ──▶ GTAO ──┐ (indirect light only, builtinAOContext)
-scene pass (MRT: color, velocity; depth) ◀─┘ ──▶ TRAA ──▶ + Bloom ──▶ AgX tone map + sRGB
+scene pass (MRT: color, velocity; depth) ◀─┘ ──▶ TRAA ──▶ + Bloom ──▶ AgX tone map + sRGB ──▶ camera look
 ```
+
+The camera look is the last pass, in display space like a video signal: crop the active view's video box, barrel, then the feed's character (analog: chroma bleed, softness, grain, scanlines, vignette, snow; digital/HD: mild sharpening). Every view variant is compiled at load so switching never stalls.
 
 Lighting is a CC0 studio HDRI (IBL + optional blurred backdrop) plus one soft-shadowed key light fitted to the drone. The floor fades into the backdrop by distance from the pad. Quality presets (`src/config/render.ts`) are auto-picked from early frame times, and a dynamic render scale holds frame time.
 
@@ -52,11 +54,22 @@ drone_root            placed so the lowest visible part rests on the pad
 
 Rotor angles are integrated from RPM each frame (`angle += spinSign · rpm/60 · 2π · dt`). Stage weights are smoothsteps of RPM (`propWeights`), so every crossfade is continuous. The disc streak turns at the strobed (aliased) rate.
 
+## Cameras (`src/cameras`, PRD §4.6)
+
+```
+OrbitControls ──▶ orbit camera ─┐
+mount_fpvCam ──▶ FPV camera ────┼──▶ CameraDirector ──▶ render camera ──▶ post pipeline
+mount_hdCam  ──▶ HD camera ─────┘    (active view,      (screen aspect, FOV framed so the
+                                     cut, feed, box)     video box spans the lens FOV)
+```
+
+FPV and HD cameras hang off the mounts on the vibrating body, so the feed shakes with the frame. `C` cycles Orbit → FPV → HD with a 150 ms dip through black; `V` switches the FPV feed between analog (4:3) and digital (16:9). The OSD (`src/ui/OSD.ts`) is a canvas over the video box on the feed's character grid (30×16 analog, 53×20 digital); the HD view shows only REC and a timer. The audio listener follows the render camera, with the close-mic mix in FPV/HD.
+
 ## Verification
 
 - `pnpm test`: unit tests (blend continuity, aliasing, vibration bounds, antenna stability, quality picker, motor dynamics, power states, battery, audio mapping, loop seam).
 - `pnpm test:e2e`: smoke test, rig checks, and the power flow through the real keyboard.
-- `pnpm verify:visual [url]`: renders the §4.9 screenshots into `docs/verification/`. Set `CHANNEL=chrome` to use an installed Chrome with WebGPU.
+- `pnpm verify:visual [url]`: renders the §4.9 screenshots into `docs/verification/`, including every camera view. Set `CHANNEL=chrome` to use an installed Chrome with WebGPU.
 - `pnpm verify:audio [url] [--clips]`: renders bench sessions offline and measures the §4.9 audio criteria into `docs/verification/audio/`. Runs in CI on the procedural path.
 - `window.__propwash` (see `src/app/debug.ts`) drives all of the above: freeze/step the sim clock, set RPM or rotor angles, plug/arm/throttle, toggle arrows, payload and LEDs, render audio offline, and project world points to pixels.
 

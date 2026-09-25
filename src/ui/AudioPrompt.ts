@@ -55,7 +55,7 @@ export function mountAudioPrompt(audio: LiveAudio, parent: HTMLElement = documen
   const keys = document.createElement('div');
   keys.className = 'pw-keys';
   keys.innerHTML =
-    '<b>P</b> battery · <b>Space</b> arm · <b>W/S</b> throttle (Shift fast) · <b>0</b> zero · <b>X</b> kill · <b>B</b> beacon · <b>L</b> payload';
+    '<b>P</b> battery · <b>Space</b> arm · <b>W/S</b> throttle (Shift fast) · <b>0</b> zero · <b>X</b> kill · <b>C</b> camera · <b>V</b> feed · <b>B</b> beacon · <b>L</b> payload';
 
   parent.append(keys, button);
   audio.onChange((s) => {

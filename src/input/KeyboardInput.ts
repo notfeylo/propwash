@@ -1,6 +1,7 @@
 import { KEYBOARD } from '../config/input';
 
-export type InputAction = 'plugToggle' | 'armToggle' | 'kill' | 'beaconToggle' | 'payloadToggle';
+export type InputAction =
+  'plugToggle' | 'armToggle' | 'kill' | 'beaconToggle' | 'payloadToggle' | 'cameraCycle' | 'feedCycle';
 
 /** One frame of device-independent input (PRD §4.7). Phase 1 uses throttle + actions. */
 export interface ControlState {
@@ -11,7 +12,15 @@ export interface ControlState {
   actions: InputAction[];
 }
 
-const ACTIONS: InputAction[] = ['plugToggle', 'armToggle', 'kill', 'beaconToggle', 'payloadToggle'];
+const ACTIONS: InputAction[] = [
+  'plugToggle',
+  'armToggle',
+  'kill',
+  'beaconToggle',
+  'payloadToggle',
+  'cameraCycle',
+  'feedCycle',
+];
 
 /** Keyboard: W/S slew throttle (Shift = faster), 0 zeroes it, P/Space/X/B/L are actions. */
 export class KeyboardInput {

@@ -10,7 +10,7 @@ const waitState = (page: Page, state: string, timeout = 20_000) =>
 test.beforeEach(async ({ page }) => {
   await page.goto('/?quality=low&dynres=0');
   await page.waitForFunction(() => window.__propwash?.ready === true, undefined, { timeout: 30_000 });
-  await page.locator('canvas').click({ position: { x: 600, y: 200 } }); // focus + audio gesture
+  await page.locator('canvas[data-engine]').click({ position: { x: 600, y: 200 } }); // focus + audio gesture
   // These tests are about the sim and input, not pixels: skip drawing so software GL on CI
   // doesn't starve the frame loop (sim time would crawl behind the 100 ms dt clamp).
   await page.evaluate(() => window.__propwash!.setRenderPaused(true));
