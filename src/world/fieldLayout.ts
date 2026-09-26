@@ -39,7 +39,7 @@ export interface FlagSpot {
 export interface FieldLayout {
   prims: FieldPrim[];
   flags: FlagSpot[];
-  /** Gate centres and headings (for tests, HUD and later race timing). */
+  /** Gate centres and headings: fly through along (sin yaw, cos yaw) or its opposite (for tests, HUD, race timing). */
   gates: { center: [number, number, number]; yaw: number }[];
 }
 
@@ -82,10 +82,11 @@ export function buildFieldLayout(terrain: Terrain, cfg = FIELD_OBJECTS): FieldLa
     const a = (k / Gc.count) * Math.PI * 2;
     const cx = Gc.center[0] + Math.cos(a) * Gc.radiiM[0];
     const cz = Gc.center[1] + Math.sin(a) * Gc.radiiM[1];
-    // Tangent of the oval → the direction you fly through; the gate plane is perpendicular to it.
+    // Tangent of the oval → the direction you fly through; the gate plane is perpendicular to it:
+    // its posts sit along `right` = (cos yaw, −sin yaw), which is square to the tangent.
     const tx = -Math.sin(a) * Gc.radiiM[0];
     const tz = Math.cos(a) * Gc.radiiM[1];
-    const yaw = Math.atan2(tx, tz) + Math.PI / 2;
+    const yaw = Math.atan2(tx, tz);
     const gy = ground(cx, cz);
     const o = Gc.openingM;
     const p = Gc.postM;

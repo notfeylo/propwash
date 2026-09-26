@@ -1,8 +1,10 @@
 /* global window, requestAnimationFrame */
 // tools/verify-budgets.mjs — `pnpm verify:budgets [baseUrl]`
-// Measures the PRD §4.2 budgets and the §4.9 FPV shake into docs/verification/budgets.md:
-// initial download and first frame on a throttled 50 Mbps link, frame times at 1440p on High,
-// console errors, and FPV camera shake at full throttle. Set CHANNEL=chrome for real WebGPU.
+// Measures the PRD §4.2 budgets, the §4.9 FPV shake and the Phase 2 §9 physics budget into
+// docs/verification/budgets.md: initial download and first frame on a throttled 50 Mbps link,
+// frame times at 1440p on High in every view while flying over the test field, the physics + FC
+// time per frame at 1 kHz, the sim keeping real time at 60 fps, console errors, and FPV camera
+// shake at full throttle. Set CHANNEL=chrome for real WebGPU.
 import { chromium } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -103,13 +105,29 @@ const frameStats = async (page, seconds) =>
     p.plug();
   });
   await page.waitForFunction(() => window.__propwash.power().state === 'DISARMED', undefined, { timeout: 20_000 });
+  // Fly: Angle mode, hover a few metres up over the pad (the field and its colliders around).
+  await page.waitForFunction(() => window.__propwash.flight() !== null, undefined, { timeout: 60_000 });
   await page.evaluate(() => {
-    window.__propwash.arm();
-    window.__propwash.setThrottle(0.35);
+    const p = window.__propwash;
+    p.setFlightMode('angle');
+    p.setThrottle(0);
+    p.arm();
   });
+  const hover = setInterval(() => {
+    void page
+      .evaluate(() => {
+        const p = window.__propwash;
+        const f = p.flight();
+        if (!f) return;
+        const y = f.position[1];
+        p.setThrottle(Math.max(0.2, Math.min(0.6, 0.36 + 0.08 * (4 - y) - 0.1 * f.velocity[1])));
+      })
+      .catch(() => {});
+  }, 50);
   await page.waitForTimeout(3000);
+  const perf0 = await page.evaluate(() => window.__propwash.perf());
   const views = [];
-  for (const cam of ['orbit', 'fpv', 'hd']) {
+  for (const cam of ['orbit', 'fpv', 'chase', 'los', 'hd']) {
     await page.evaluate((c) => window.__propwash.setCamera(c, true), cam);
     await page.waitForTimeout(1500);
     const s = await frameStats(page, 6);
@@ -123,9 +141,72 @@ const frameStats = async (page, seconds) =>
     });
     console.log(views.at(-1));
   }
+  // Physics + flight controller on the main thread (Phase 2 §9: < 1.5 ms per frame at 1 kHz).
+  // Frame-rate independent: main-thread physics time per simulated second, as a 60 fps frame.
+  const perf = await page.evaluate(() => window.__propwash.perf());
+  const perStep = (perf.totalMs - perf0.totalMs) / ((perf.simTime - perf0.simTime) * 1000);
+  const per60 = (perStep * 1000) / 60;
+  check(
+    'Physics + FC ≤ 1.5 ms per 60 fps frame at 1 kHz (flying over the test field)',
+    per60 <= 1.5,
+    `${per60.toFixed(2)} ms per 60 fps frame (${(perStep * 1000).toFixed(1)} µs per 1 kHz step, over ${(perf.simTime - perf0.simTime).toFixed(1)} s of flight) · ${perf.liveColliders} field colliders near the drone`,
+  );
+  clearInterval(hover);
   check('No console errors while running', errors.length === 0, errors.length ? errors.join(' | ') : 'none');
+  await page.close();
+}
 
-  // 3. FPV shake at full throttle: the camera rides the vibrating body.
+// 3. Real time at 60 fps: with vsync on, 1 s of wall time must be 1 s of flight (17 steps a frame).
+{
+  const b2 = await chromium.launch({ channel: process.env.CHANNEL || undefined, args: ['--enable-unsafe-webgpu'] });
+  const page = await b2.newPage({ viewport: { width: 1920, height: 1080 } });
+  await page.goto(`${BASE}/?quality=high&dynres=0`);
+  await page.waitForFunction(
+    () => window.__propwash?.ready === true && window.__propwash.flight() !== null,
+    undefined,
+    {
+      timeout: 60_000,
+    },
+  );
+  const r = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const p = window.__propwash;
+        const s0 = p.flight().droppedSteps;
+        const t0 = performance.now();
+        const sim0 = p.perf().simTime;
+        let frames = 0;
+        const tick = () => {
+          frames++;
+          if (performance.now() - t0 < 5000) requestAnimationFrame(tick);
+          else {
+            const wall = (performance.now() - t0) / 1000;
+            resolve({ wall, sim: p.perf().simTime - sim0, fps: frames / wall, dropped: p.flight().droppedSteps - s0 });
+          }
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
+  check(
+    'Flight keeps real time at the display rate (no slow-motion)',
+    Math.abs(r.sim / r.wall - 1) < 0.02,
+    `${r.sim.toFixed(3)} s of flight in ${r.wall.toFixed(3)} s at ${r.fps.toFixed(0)} fps (${(r.sim / r.wall).toFixed(3)}× real time, ${r.dropped} steps dropped)`,
+  );
+  await b2.close();
+}
+
+// 4. FPV shake on the bench (the frame's vibration, with the drone held on the pad).
+{
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  await page.goto(`${BASE}/?quality=high&dynres=0&flight=0`);
+  await page.waitForFunction(() => window.__propwash?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__propwash.plug());
+  await page.waitForFunction(() => window.__propwash.power().state === 'DISARMED', undefined, { timeout: 20_000 });
+  await page.evaluate(() => {
+    window.__propwash.arm();
+  });
+
+  // FPV shake at full throttle: the camera rides the vibrating body.
   await page.evaluate(() => {
     window.__propwash.setCamera('fpv', true);
     window.__propwash.setThrottle(1);

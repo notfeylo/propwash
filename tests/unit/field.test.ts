@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { freestyle7 } from '../../src/config/airframes';
 import { TURTLE } from '../../src/config/aero';
 import { PHYSICS } from '../../src/config/physics';
+import { FIELD_OBJECTS } from '../../src/config/field';
 import type { Sticks } from '../../src/sim/fc/FlightController';
 import { FlightSim } from '../../src/sim/flight/FlightSim';
 import { quatFromAxisAngle, v3, type V3 } from '../../src/sim/vec';
@@ -205,9 +206,35 @@ describe('prop strikes and impacts', () => {
   });
 });
 
+describe('gates', () => {
+  it('face along the oval: the opening is square to the loop, the posts are beside it', () => {
+    const G = FIELD_OBJECTS.gates;
+    layout.gates.forEach((g, k) => {
+      const a = (k / G.count) * Math.PI * 2;
+      const t = [-Math.sin(a) * G.radiiM[0], Math.cos(a) * G.radiiM[1]];
+      const n = Math.hypot(t[0], t[1]);
+      const through = [Math.sin(g.yaw), Math.cos(g.yaw)];
+      // Along the loop, the way through the gate.
+      expect(Math.abs((through[0] * t[0] + through[1] * t[1]) / n)).toBeCloseTo(1, 9);
+      // The two posts of this gate straddle the path: their offset is square to it.
+      const posts = layout.prims.filter(
+        (p) => p.role === 'gatePost' && Math.hypot(p.position[0] - g.center[0], p.position[2] - g.center[2]) < 2,
+      );
+      expect(posts).toHaveLength(2);
+      const off = [posts[1].position[0] - posts[0].position[0], posts[1].position[2] - posts[0].position[2]];
+      expect(Math.abs(off[0] * t[0] + off[1] * t[1]) / n).toBeLessThan(1e-9);
+    });
+  });
+});
+
 describe('land mode (return to home and land)', () => {
   function landHome(wind: 'calm' | 'light') {
-    const s = new FlightSim({ rapier: RAPIER, airframe: freestyle7, wind, field: { terrain, layout, padTopY: PAD_TOP } });
+    const s = new FlightSim({
+      rapier: RAPIER,
+      airframe: freestyle7,
+      wind,
+      field: { terrain, layout, padTopY: PAD_TOP },
+    });
     s.battery.connected = true;
     const home = { ...s.state.position };
     s.inputs = { driven: true, cmd: [0, 0, 0, 0], sticks: { throttle: 0.3, roll: 0, pitch: 0, yaw: 0 } };
@@ -219,7 +246,12 @@ describe('land mode (return to home and land)', () => {
     s.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     s.fc.reset(q);
     s.autoland.reset(freestyle7.reference.hoverCmd);
-    s.inputs = { driven: true, cmd: [0, 0, 0, 0], sticks: { throttle: 0.5, roll: 0, pitch: 0, yaw: 0 }, autoland: true };
+    s.inputs = {
+      driven: true,
+      cmd: [0, 0, 0, 0],
+      sticks: { throttle: 0.5, roll: 0, pitch: 0, yaw: 0 },
+      autoland: true,
+    };
     let maxTilt = 0;
     let maxY = 0;
     const t0 = s.state.time;
@@ -232,7 +264,15 @@ describe('land mode (return to home and land)', () => {
     s.inputs = { driven: false, cmd: [0, 0, 0, 0] };
     run(s, 1);
     const off = Math.hypot(s.state.position.x - home.x, s.state.position.z - home.z);
-    const r = { took, off, tilt: tiltDeg(s), maxTilt, maxY, landed: s.autoland.phase === 'landed', onGround: s.state.onGround };
+    const r = {
+      took,
+      off,
+      tilt: tiltDeg(s),
+      maxTilt,
+      maxY,
+      landed: s.autoland.phase === 'landed',
+      onGround: s.state.onGround,
+    };
     s.dispose();
     return r;
   }

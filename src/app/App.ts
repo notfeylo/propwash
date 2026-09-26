@@ -98,6 +98,11 @@ export class App {
   private video: { rec: MediaRecorder; chunks: Blob[] } | null = null;
   private target = { position: new Vector3(), quaternion: new Quaternion(), velocity: new Vector3() };
   private qb = new Quaternion();
+  /** Main-thread time of the physics + FC update, per frame (ms), last 600 frames (budget §9). */
+  readonly physicsMs = new Float32Array(600);
+  private physicsIdx = 0;
+  /** Total physics + FC time since load (ms), with `flight.state.time`: cost per simulated second. */
+  physicsTotalMs = 0;
   /** The flight test field (Phase 2 §5), built when flight is on. */
   field: { terrain: Terrain; layout: FieldLayout; view: FieldView } | null = null;
   private windV = new Vector3();
@@ -511,7 +516,11 @@ export class App {
     pt.motorTest.enabled = this.motorPanel.open && this.motorPanel.safety;
     for (let i = 0; i < 4; i++) pt.motorTest.values[i] = this.motorPanel.values[i];
     // During a replay the live drone waits (disarmed) where it was.
+    const tPhys = performance.now();
     this.lastEvents = pt.update(replaying ? 0 : simDt);
+    const phys = performance.now() - tPhys;
+    this.physicsMs[this.physicsIdx++ % this.physicsMs.length] = phys;
+    this.physicsTotalMs += phys;
     this.recorder?.update(replaying ? 0 : simDt, pt.power.armed);
     for (const e of this.lastEvents)
       if (e.type === 'armRefused') this.toast.show(armBlockedMessage(e.reason, controls.device));

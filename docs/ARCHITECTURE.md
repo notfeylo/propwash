@@ -114,7 +114,7 @@ buildFieldLayout(terrain) primitives ─┼─▶ Rapier box / cylinder / ball c
                                           wind flags, SkyMesh sky, distance fog   (render/field.ts)
 ```
 
-`src/world` is pure TypeScript, shared by the physics and the renderer, so what you see is what you hit. The drone's own colliders (hull, canister capsule, motor feet, prop-disc sensors) come from `drone.glb` via `tools/gen-colliders.mjs`. `FlightState` reports `onGround`, per-prop `propStrike` and the contact `impactG`; turtle mode reverses motors from the stick (`FlightController.turtle`).
+`src/world` is pure TypeScript, shared by the physics and the renderer, so what you see is what you hit. The renderer draws every object; the physics world holds only those within 30 m of the drone (`FIELD_STREAMING`), because Rapier's step costs per collider. The drone's own colliders (hull, canister capsule, motor feet, prop-disc sensors) come from `drone.glb` via `tools/gen-colliders.mjs`. `FlightState` reports `onGround`, per-prop `propStrike` and the contact `impactG`; turtle mode reverses motors from the stick (`FlightController.turtle`).
 
 Prop wash (`src/sim/flight/PropWash.ts`) scales each rotor's thrust by `1 − loss·sev + fluct·sev·n(t)`, where `n` is seeded noise band-passed to 10–40 Hz and `sev` comes from the rotor's axial inflow against its induced velocity, faded by in-plane speed. Land mode (`src/sim/fc/autoland.ts`) is an autopilot that feeds virtual sticks to the Angle-mode FC (`FlightController.update(…, 'angle')`) inside the same 1 kHz step; `Powertrain` owns the switch, stick override and disarm on touchdown.
 

@@ -34,7 +34,8 @@ export const FIELD_OBJECTS = {
     { at: [24, 14], size: [4, 2, 4], yawDeg: 45 },
   ] as { at: [number, number]; size: [number, number, number]; yawDeg: number }[],
   ramps: [
-    { at: [-12, -30], length: 8, width: 3, height: 2.5, yawDeg: 0 },
+    // In the oval's infield, clear of the racing line through the gates.
+    { at: [0, -45], length: 8, width: 3, height: 2.5, yawDeg: 90 },
     { at: [30, -20], length: 10, width: 4, height: 3.5, yawDeg: -60 },
   ] as { at: [number, number]; length: number; width: number; height: number; yawDeg: number }[],
   /** Trees scattered outside the launch area. */

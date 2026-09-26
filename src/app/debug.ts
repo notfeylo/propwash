@@ -1,6 +1,7 @@
 import type { App } from './App';
 import type { CameraMode, FeedStyle, HdStabilization } from '../config/cameras';
 import { toCsv } from '../sim/blackbox';
+import { attitude } from '../sim/frames';
 import type { ControlState } from '../input/types';
 import type { BackgroundMode, QualityPreset } from '../config/render';
 import type { FcLedMode, VtxLedMode } from '../drone/LEDs';
@@ -125,7 +126,12 @@ export interface DebugHandle {
     onGround: boolean;
     propStrike: boolean[];
     turtle: boolean;
+    /** True attitude (deg): roll right, pitch nose-down, heading clockwise from −Z. */
+    attitude: [number, number, number];
   } | null;
+  /** The test field: gate centres (world, m) with the direction you fly through them, and ground height. */
+  gates(): { center: [number, number, number]; yaw: number }[];
+  groundAt(x: number, z: number): number;
   setWind(preset: 'calm' | 'light' | 'breezy'): void;
   resetDrone(): void;
   /** Orbit camera follows the drone in flight (default on). */
@@ -140,6 +146,16 @@ export interface DebugHandle {
   /** Land mode (armed): returns whether it is on. */
   toggleLand(): boolean;
   setHdStabilization(m: HdStabilization): void;
+  /** Physics + FC time per frame (ms) over the last 600 frames, and field colliders in the world. */
+  perf(): {
+    median: number;
+    p95: number;
+    max: number;
+    frames: number;
+    liveColliders: number;
+    simTime: number;
+    totalMs: number;
+  };
   /** Where the drone model is drawn (the live drone, or the replay's). */
   dronePosition(): Vec3;
   /** Flight recording (Phase 2 §8.2): the one in progress, else the last. */
@@ -306,8 +322,14 @@ export function exposeDebug(app: App): void {
         onGround: s.onGround,
         propStrike: [...s.propStrike],
         turtle: app.powertrain.turtleActive,
+        attitude: (() => {
+          const a = attitude(q);
+          return [a.roll / DEG, a.pitch / DEG, a.yaw / DEG] as [number, number, number];
+        })(),
       };
     },
+    gates: () => app.field?.layout.gates.map((g) => ({ center: [...g.center], yaw: g.yaw })) ?? [],
+    groundAt: (x, z) => app.flight?.groundAt(x, z) ?? 0,
     setWind: (w) => app.flight && (app.flight.wind.preset = w),
     resetDrone: () => app.resetDrone(),
     setFollow: (f) => (app.followDrone = f),
@@ -317,6 +339,19 @@ export function exposeDebug(app: App): void {
       app.applyFcSettings();
     },
     setHdStabilization: (m) => (app.cameras.hdStabilization = m),
+    perf() {
+      const a = [...app.physicsMs].filter((v) => v > 0).sort((x, y) => x - y);
+      const q = (p: number) => a[Math.min(a.length - 1, Math.floor(p * a.length))] ?? 0;
+      return {
+        median: q(0.5),
+        p95: q(0.95),
+        max: a.at(-1) ?? 0,
+        frames: a.length,
+        liveColliders: app.flight?.liveFieldColliders ?? 0,
+        simTime: app.flight?.state.time ?? 0,
+        totalMs: app.physicsTotalMs,
+      };
+    },
     dronePosition: () => {
       const p = app.drone.root.position;
       return [p.x, p.y, p.z];

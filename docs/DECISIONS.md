@@ -314,3 +314,17 @@ The drone has no altitude hold, so the landing test "pilot" holds −1 m/s on th
 - My first version (fewer, non-overlapping windows, no Y-correction, a relative λ) swung from 1% to 450% overshoot on the same data; PIDtoolbox's settings are what made it stable.
 - Yaw from rapid random stick reversals shows an early spike (the headless figure above): yaw feedforward plus the rotor-inertia kick make the gyro lead the setpoint within milliseconds. Flown normally, yaw reads 90% at 162 ms with 1% overshoot.
 - Import flies a `blackbox_decode` CSV through the current airframe and PIDs at 1 kHz, by the log's rate setpoints (default: it compares the rate loop and plant regardless of the pilot's rates) or its sticks through our rates, 1.5 km above flat ground so no terrain interferes. It overlays the sim's gyro on the log's per axis and both step responses, with the RMS error. With no real log yet it was tested with synthetic ones: the sim's own CSV flies back within 0.5–0.8 °/s RMS, and a 1.8× inertia airframe shows up 4× worse. `config/airframes/validated/` waits for the first real log (§8.3).
+
+## 2026-09-26 · Performance pass (§9: 60 fps, physics < 1.5 ms per frame)
+
+- **The step cap halved the flight speed.** The PRD's "max 8 sub-steps per frame" was written for a slower loop: at 1 kHz a 60 fps frame needs 17 steps, so the live sim dropped half of them and flew in slow motion (at 144 Hz it kept up). The cap is now 40 steps, real time down to 25 fps, then slow-motion as before. `verify:budgets` now checks that 5 s of wall time is 5 s of flight (1.007×).
+- **Field colliders are streamed.** Rapier's step cost ≈ 70 ns per collider, static or even disabled, and the field has ≈ 900 (841 of them poles): 0.07 ms per step before any of our own work, 2.3 ms per 60 fps frame in all. Now the terrain and the pad are always in the world and every other object joins when the drone comes within 30 m (plus its own size), checked every 20 steps (1.8 m of travel at 90 m/s). The live set is sim state, so checkpoints and replays carry it; the replay stays bit-identical. Headless per step: 0.025 ms in the air, 0.046 ms on the ground (was 0.079 / 0.107). In Chrome, flying over the field: 67 µs per step, 1.1 ms per 60 fps frame.
+- Frame times at 1440p High stay 2.2–2.6 ms median in all five views on the RTX 4070 SUPER.
+
+## 2026-09-26 · Gates faced the wrong way
+
+The group 3 layout added 90° to each gate's heading, so every gate faced outward from the oval: you could fly through them radially but not around the loop. The heading is now the loop's tangent (a unit test checks each gate's posts straddle the path). Ramp 1 stood right behind gate 2 on the corrected line; it moved into the oval's infield at (0, −45).
+
+## 2026-09-26 · The README flight is flown by a scripted pilot
+
+`pnpm record:gif <url> fpv` flies freestyle7 on the sticks through the real FC: waypoints in Angle mode (tilt toward the velocity it wants, yaw toward where it goes, throttle holding height), four gates at 6.5 m/s (it passes each within 0.4 m of centre), a climb-out, an Acro roll flip, a dive and a landing on the pad. The same flight with the view switching (Chase, FPV, LOS, HD horizon lock and raw) is `cameras`.

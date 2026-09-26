@@ -3,8 +3,8 @@ import { TURTLE, type WindPreset } from '../../config/aero';
 import { type Airframe, MOTOR_PROP, ROTORS } from '../../config/airframes';
 import { HULL_POINTS, MOTOR_FEET, PAYLOAD_CAPSULE } from '../../config/airframes/colliders';
 import { ARMING_FC } from '../../config/fc';
-import { DRONE_COLLIDERS, IMPACT, PAD_COLLIDER, PHYSICS } from '../../config/physics';
-import type { FieldLayout } from '../../world/fieldLayout';
+import { DRONE_COLLIDERS, FIELD_STREAMING, IMPACT, PAD_COLLIDER, PHYSICS } from '../../config/physics';
+import type { FieldLayout, FieldPrim } from '../../world/fieldLayout';
 import type { Terrain } from '../../world/terrain';
 import { Autoland } from '../fc/autoland';
 import type { FlightMode, AxisGains, RateParams, RatesModel } from '../../config/fc';
@@ -97,6 +97,8 @@ const NOT_STATE = new Set([
   'onStep',
   'beforeArm',
   'maxStepsPerFrame',
+  'fieldPrims',
+  'fieldReach',
 ]);
 
 /** Everything render, audio and the tests read. Plain data: safe to copy to a worker later. */
@@ -186,6 +188,12 @@ export class FlightSim {
   onStep: ((s: FlightSim) => void) | null = null;
   /** Called just before arming changes anything (a recording takes its checkpoint here). */
   beforeArm: (() => void) | null = null;
+  /** Field objects (static config) and how far each reaches horizontally from its centre (m). */
+  private fieldPrims: FieldPrim[] = [];
+  private fieldReach: number[] = [];
+  /** Per field object: its collider handle while it is in the world, else −1 (state). */
+  private fieldLive: number[] = [];
+  private nextFieldRefresh = 0;
   private colliders: RAPIER_NS.Collider[] = [];
   private propSensors: RAPIER_NS.Collider[] = [];
   /** World-frame force applied last step (N), to separate contact forces from ours. */
@@ -237,6 +245,7 @@ export class FlightSim {
     this.body = this.world.createRigidBody(desc);
     this.applyMassProperties();
     this.buildDroneColliders(o.airframe);
+    if (this.fieldPrims.length) this.streamField(spawn.x, spawn.z);
     this.lastVel = v3();
     this.state = this.snapshot();
     this.prev = this.state;
@@ -283,17 +292,46 @@ export class FlightSim {
     this.world.createCollider(
       mat(R.ColliderDesc.cylinder(t / 2, PAD_COLLIDER.radiusM).setTranslation(0, f.padTopY - t / 2, 0)),
     );
-    for (const p of layout.prims) {
-      const d =
-        p.shape === 'box'
-          ? R.ColliderDesc.cuboid(...p.halfExtents)
-          : p.shape === 'cylinder'
-            ? R.ColliderDesc.cylinder(p.halfHeight, p.radius)
-            : R.ColliderDesc.ball(p.radius);
-      const [x, y, z] = p.position;
-      const [qx, qy, qz, qw] = p.rotation;
-      this.world.createCollider(mat(d.setTranslation(x, y, z).setRotation({ x: qx, y: qy, z: qz, w: qw })));
+    // Objects join the world only near the drone (FIELD_STREAMING).
+    this.fieldPrims = layout.prims;
+    this.fieldReach = layout.prims.map((p) =>
+      p.shape === 'box' ? Math.hypot(p.halfExtents[0], p.halfExtents[1], p.halfExtents[2]) : p.radius,
+    );
+    this.fieldLive = layout.prims.map(() => -1);
+  }
+
+  /** Add the field objects within reach of (x, z) to the world and remove the rest. */
+  private streamField(x: number, z: number): void {
+    const R = this.R;
+    const reach = FIELD_STREAMING.radiusM;
+    for (let k = 0; k < this.fieldPrims.length; k++) {
+      const p = this.fieldPrims[k];
+      const near = Math.hypot(p.position[0] - x, p.position[2] - z) < reach + this.fieldReach[k];
+      const live = this.fieldLive[k];
+      if (near && live < 0) {
+        const d =
+          p.shape === 'box'
+            ? R.ColliderDesc.cuboid(...p.halfExtents)
+            : p.shape === 'cylinder'
+              ? R.ColliderDesc.cylinder(p.halfHeight, p.radius)
+              : R.ColliderDesc.ball(p.radius);
+        const [px, py, pz] = p.position;
+        const [qx, qy, qz, qw] = p.rotation;
+        d.setTranslation(px, py, pz)
+          .setRotation({ x: qx, y: qy, z: qz, w: qw })
+          .setFriction(PHYSICS.contact.friction)
+          .setRestitution(PHYSICS.contact.restitution);
+        this.fieldLive[k] = this.world.createCollider(d).handle;
+      } else if (!near && live >= 0) {
+        this.world.removeCollider(this.world.getCollider(live), false);
+        this.fieldLive[k] = -1;
+      }
     }
+  }
+
+  /** Field objects currently in the physics world. */
+  get liveFieldColliders(): number {
+    return this.fieldLive.filter((h) => h >= 0).length;
   }
 
   /**
@@ -395,6 +433,11 @@ export class FlightSim {
     const body = this.body;
     const inp = this.inputs;
     const ms = this.motors.motors;
+    if (this.fieldPrims.length && this.stepIndex >= this.nextFieldRefresh) {
+      const t = body.translation();
+      this.streamField(t.x, t.z);
+      this.nextFieldRefresh = this.stepIndex + FIELD_STREAMING.refreshSteps;
+    }
     if (this.log && inp !== this.loggedInputs) {
       this.loggedInputs = inp;
       this.log.push({ step: this.stepIndex, op: 'inputs', inputs: copyInputs(inp) });
@@ -599,6 +642,7 @@ export class FlightSim {
   reset(position: V3 = this.restingAt(), yaw = 0): void {
     this.log?.push({ step: this.stepIndex, op: 'reset', position, yaw });
     this.body.setTranslation(position, true);
+    if (this.fieldPrims.length) this.streamField(position.x, position.z);
     this.body.setRotation(yawQuat(yaw), true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
