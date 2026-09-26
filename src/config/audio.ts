@@ -135,6 +135,34 @@ export const AUDIO = {
     plug: { tickS: 0.004, tickGain: 0.5, popS: 0.035, popGain: 0.35, thumpHz: 110 },
   },
 
+  /** Phase 2 §6: F — wind / air rush, noise ∝ airspeed², band-passed; louder in FPV (mic on the drone). */
+  wind: { gain: 0.5, refMs: 30, maxGain: 0.6, centerHz: [300, 1800] as const, q: 0.6, fpvBoost: 1.6, orbitFalloffM: 6 },
+  /** Prop wash chop: amplitude modulation of layers A and D at 10–30 Hz, depth ∝ wash severity. */
+  chop: { depth: 0.75, hz: [10, 30] as const, wanderPerS: 6 },
+  /** Doppler in the outside views (orbit; chase and LOS later): pitch × c / (c + v_away). */
+  doppler: { speedOfSoundMs: 343, maxShift: 0.25 },
+  /** Impacts through the frame: grass thud, hard knock, carbon crack; level ∝ log(g). */
+  impact: {
+    minG: 3,
+    fullG: 200,
+    refractoryS: 0.08,
+    gain: 0.9,
+    grass: { lowpassHz: 260, durationS: 0.18 },
+    hard: { bandHz: 1100, q: 1.2, durationS: 0.1 },
+    crack: { highpassHz: 2600, durationS: 0.03, gain: 0.5 },
+  },
+  /** Prop strike: a sharp tick from that motor; a severe one at speed adds an ESC desync screech. */
+  propStrike: {
+    tickHz: 3200,
+    tickS: 0.012,
+    gain: 0.6,
+    desyncMinRpm: 8000,
+    desyncS: 0.16,
+    desyncHz: [1800, 3600] as const,
+  },
+  /** Turtle mode: reversed props at high torque, strained and buzzy. */
+  turtle: { whineBoost: 5, bladeCut: 0.6, airBoost: 1.3 },
+
   /** Per-layer user volume (Settings, Task 8). */
   userVolume: { A: 1, B: 1, C: 1, D: 1, E: 1, beeps: 1 },
 };

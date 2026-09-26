@@ -12,7 +12,11 @@ export class Antenna {
 
   constructor(readonly pivot: Object3D) {}
 
-  update(dt: number, vibrationIntensity: number, bodyAccel: Vector3): void {
+  /**
+   * @param bodyAccel specific force minus gravity's share, body frame (m/s²): inertia swings the whip
+   * @param airBody air flowing past the drone, body frame (m/s): drag bends it downwind
+   */
+  update(dt: number, vibrationIntensity: number, bodyAccel: Vector3, airBody?: Vector3): void {
     if (dt <= 0) return;
     const { stiffness: k, dampingRatio: zeta, vibrationDrive, accelDrive, maxAngleRad, substepHz } = ANTENNA;
     const c = 2 * zeta * Math.sqrt(k);
@@ -21,8 +25,14 @@ export class Antenna {
     // Noise scaled by 1/√h so the excitation strength doesn't depend on the step size.
     const noise = (vibrationDrive * vibrationIntensity) / Math.sqrt(h * substepHz);
     // Accelerating forward (−Z) tips the whip back (+X rotation); sideways likewise about Z.
-    const ax = -bodyAccel.z * accelDrive;
-    const az = bodyAccel.x * accelDrive;
+    let ax = -bodyAccel.z * accelDrive;
+    let az = bodyAccel.x * accelDrive;
+    if (airBody) {
+      // Air from the front (flowing toward +Z) tips the whip back like forward acceleration does.
+      const speed = airBody.length();
+      ax += airBody.z * speed * ANTENNA.airDrive;
+      az -= airBody.x * speed * ANTENNA.airDrive;
+    }
     for (let i = 0; i < steps; i++) {
       const fx = -k * this.angle.x - c * this.velocity.x + ax + gaussian() * noise;
       const fz = -k * this.angle.y - c * this.velocity.y + az + gaussian() * noise;

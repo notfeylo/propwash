@@ -94,6 +94,7 @@ export class DroneModel {
   private basePosition = new Vector3();
   private time = 0;
   private bodyAccel = new Vector3();
+  private airBody = new Vector3();
 
   static async load(url: string = DRONE.modelUrl): Promise<DroneModel> {
     const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(url);
@@ -169,6 +170,15 @@ export class DroneModel {
     this.updateGroundOffset();
   }
 
+  /**
+   * Flight motion for the antenna (Phase 2 §6), body frame: horizontal acceleration the whip feels
+   * and the air flowing past.
+   */
+  setBodyMotion(accel: Vector3, air: Vector3): void {
+    this.bodyAccel.copy(accel);
+    this.airBody.copy(air);
+  }
+
   /** Current frame vibration, 0..1 of the peak at rpmMax. */
   get vibrationIntensity(): number {
     return this.vibration.intensity;
@@ -233,7 +243,7 @@ export class DroneModel {
     this.vibration.update(dt, this.rotors);
     this.body.position.copy(this.basePosition).add(this.vibration.position);
     this.body.rotation.copy(this.vibration.rotation);
-    this.antenna.update(dt, this.vibration.intensity, this.bodyAccel);
+    this.antenna.update(dt, this.vibration.intensity, this.bodyAccel, this.airBody);
     this.leds.update(this.time);
   }
 }

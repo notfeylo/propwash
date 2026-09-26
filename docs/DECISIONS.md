@@ -263,3 +263,26 @@ The estimator started level and only nudged toward the accelerometer, so a quad 
 ## 2026-09-26 · T12 is flown by a scripted pilot
 
 The drone has no altitude hold, so the landing test "pilot" holds −1 m/s on the throttle (P on vertical speed) in Angle mode from 2 m, cuts the throttle on contact and disarms 0.3 s later. It touches down at 0.86 m/s, ground effect having taken a little of the speed in the last few centimetres.
+
+## 2026-09-26 · Prop wash (§2.4)
+
+- Each rotor gets a severity from how far it is descending into its own wake: 0 while the axial inflow is above −0.6 of the hover induced velocity, 1 at −0.8 (smoothstep), faded out by in-plane airspeed (gone by 4 m/s) and smoothed at 8 Hz.
+- It costs thrust two ways: a mean loss (15% at full severity) and a fluctuation, gaussian noise band-passed to 10–40 Hz, normalized to unit RMS and scaled by 0.8. The noise comes from a seeded stream, so replays stay bit-identical.
+- T8 is measured in Acro. In Angle mode the self-levelling hid most of the wobble (±1°); pilots punch out of a dive in Acro, and there it's ±3° with a 10–40 Hz gyro RMS 120× clean hover. A control run with the wash off stays at 1×.
+- The fluctuation was raised to 0.8 to make the wobble visible: lower values passed T8's ratio but the attitude barely moved.
+
+## 2026-09-26 · Land mode (return home and land)
+
+- Owner request, beyond the PRD. G (✕ on the pad) while armed and flying: the quad climbs to 6 m above home (or the ground under it), flies home at up to 7 m/s facing it, descends at 2 m/s then 0.5 m/s below 2.5 m, and disarms 0.4 s after touchdown. Home is where it armed.
+- It is an autopilot on top of the real FC, not a shortcut: it outputs Angle-mode sticks (position → velocity → acceleration, tilt capped at 28°, throttle from a learned hover value divided by cos(tilt)). The FC, motors and physics are the same ones the pilot flies, so wind and prop wash still act on it.
+- Moving any stick past 40% hands control back. The OSD shows LAND and the distance home.
+- It uses the true position (no GPS model); lands within 0.3 m in calm air and 0.5 m in light wind.
+
+## 2026-09-26 · Audio and visual coupling (§6)
+
+- Layer F: band-passed noise whose level goes with airspeed², louder in FPV (the mic rides on the drone) and fading with orbit distance.
+- Prop wash chop: an LFO wandering over 10–30 Hz modulates the loop and noise layers (A, D) with depth ∝ wash severity.
+- Doppler shifts the motor voices from the drone's velocity relative to the listener, clamped to ±25%. It only applies in outside views: in FPV the mic moves with the drone. The orbit camera follows the drone, so the shift is small there; chase and LOS (group 5) will make it obvious.
+- Impacts: a thump on grass, a harder knock plus a carbon crack on objects, scaled by the contact g. The heightfield collider is tagged so contacts know their surface. Crash detection now reads impacts without draining them; the app drains them for sound each frame.
+- A prop strike's rising edge plays a tick and an ESC desync screech; turtle mode strains the voices (reverse spin under heavy load).
+- The antenna whip swings with the real flight acceleration and bends back in the airflow (`ANTENNA.airDrive`).

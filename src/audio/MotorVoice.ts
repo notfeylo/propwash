@@ -23,6 +23,16 @@ interface SpoolShot {
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * Math.min(1, Math.max(0, t));
 
+/** Flight coupling for one update (Phase 2 §6); all optional, defaults = the bench. */
+export interface VoiceFlight {
+  /** Prop wash severity 0..1: amplitude chop on layers A and D. */
+  chop?: number;
+  /** Doppler pitch factor (1 = none). */
+  doppler?: number;
+  /** Spinning in reverse (turtle mode): strained, buzzy. */
+  reverse?: boolean;
+}
+
 /**
  * One motor's sound (PRD §4.5), placed at its rotor with an HRTF panner:
  *   A recorded loop · B blade-pass PeriodicWave · C electrical whine · D air noise ·
@@ -45,6 +55,12 @@ export class MotorVoice {
   private dFilter: BiquadFilterNode;
   private dGain: GainNode;
   private spool: SpoolShot | null = null;
+  /** Prop wash chop: A and D pass through this gain, modulated by a wandering 10–30 Hz LFO. */
+  private chop: GainNode;
+  private chopLfo: OscillatorNode;
+  private chopDepth: GainNode;
+  private chopHz: number;
+  private rand: () => number;
   private sinceTransient = Infinity;
   private bOvershoot = 0;
   private bOvershootTau = 0.05;
@@ -57,6 +73,7 @@ export class MotorVoice {
     rand: () => number = Math.random,
   ) {
     const c = ctx;
+    this.rand = rand;
     this.panner = new PannerNode(c, {
       panningModel: 'HRTF',
       distanceModel: 'inverse',
@@ -69,11 +86,18 @@ export class MotorVoice {
     this.sum.connect(this.panner);
     this.beepInput = new GainNode(c, { gain: 1 });
     this.beepInput.connect(this.panner);
+    this.chop = new GainNode(c, { gain: 1 });
+    this.chop.connect(this.sum);
+    this.chopHz = lerp(AUDIO.chop.hz[0], AUDIO.chop.hz[1], rand());
+    this.chopLfo = new OscillatorNode(c, { type: 'sine', frequency: this.chopHz });
+    this.chopDepth = new GainNode(c, { gain: 0 });
+    this.chopLfo.connect(this.chopDepth).connect(this.chop.gain);
+    this.chopLfo.start();
 
     // A: recorded loop, random start so the four voices never phase-lock.
     this.aDuck = new GainNode(c, { gain: 1 });
     this.aGain = new GainNode(c, { gain: 0 });
-    this.aGain.connect(this.aDuck).connect(this.sum);
+    this.aGain.connect(this.aDuck).connect(this.chop);
     if (res.loop) {
       this.aSrc = new AudioBufferSourceNode(c, { buffer: res.loop, loop: true });
       this.aSrc.connect(this.aGain);
@@ -102,7 +126,7 @@ export class MotorVoice {
     this.dSrc = new AudioBufferSourceNode(c, { buffer: res.noise, loop: true });
     this.dFilter = new BiquadFilterNode(c, { type: 'bandpass', frequency: 600, Q: AUDIO.layers.D.q });
     this.dGain = new GainNode(c, { gain: 0 });
-    this.dSrc.connect(this.dFilter).connect(this.dGain).connect(this.sum);
+    this.dSrc.connect(this.dFilter).connect(this.dGain).connect(this.chop);
     this.dSrc.start(0, rand() * res.noise.duration);
   }
 
@@ -137,6 +161,31 @@ export class MotorVoice {
     src.stop(now + dur + 0.1);
     this.bOvershoot = E.pitchOvershoot * strength * Math.sign(direction);
     this.bOvershootTau = dur / 3;
+  }
+
+  /** Prop strike: a tick from this motor, plus an ESC desync screech when it happens at speed. */
+  propStrike(rpm: number): void {
+    const P = AUDIO.propStrike;
+    const now = this.ctx.currentTime;
+    const src = new AudioBufferSourceNode(this.ctx, { buffer: this.res.noise });
+    const bp = new BiquadFilterNode(this.ctx, { type: 'bandpass', frequency: P.tickHz, Q: 2 });
+    const g = new GainNode(this.ctx, { gain: 0 });
+    src.connect(bp).connect(g).connect(this.beepInput);
+    g.gain.setValueAtTime(P.gain * AUDIO.userVolume.E, now);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + P.tickS);
+    src.start(now, this.rand() * (this.res.noise.duration - 0.2));
+    src.stop(now + P.tickS + 0.02);
+    if (Math.abs(rpm) < P.desyncMinRpm) return;
+    // Desync: the ESC loses sync and the motor shrieks, a fast rough sweep.
+    const osc = new OscillatorNode(this.ctx, { type: 'sawtooth', frequency: P.desyncHz[1] });
+    const dg = new GainNode(this.ctx, { gain: 0 });
+    osc.connect(dg).connect(this.beepInput);
+    osc.frequency.setValueAtTime(P.desyncHz[1], now);
+    osc.frequency.exponentialRampToValueAtTime(P.desyncHz[0], now + P.desyncS);
+    dg.gain.setValueAtTime(P.gain * 0.35 * AUDIO.userVolume.E, now);
+    dg.gain.setTargetAtTime(0, now + P.desyncS * 0.6, P.desyncS / 4);
+    osc.start(now);
+    osc.stop(now + P.desyncS * 1.5);
   }
 
   /** Spool-down one-shot on disarm/unplug from speed (recording path only). */
@@ -177,10 +226,22 @@ export class MotorVoice {
    * @param rpmRate its rate of change (RPM/s)
    * @param driven whether the ESC is driving it (transients only while driven)
    */
-  update(dt: number, rpm: number, rpmRate: number, driven: boolean): void {
+  update(dt: number, signedRpm: number, rpmRate: number, driven: boolean, flight: VoiceFlight = {}): void {
     const now = this.ctx.currentTime;
+    // Reverse spin (turtle) sounds like the same speed forward, but strained.
+    const rpm = Math.abs(signedRpm);
+    rpmRate = signedRpm < 0 ? -rpmRate : rpmRate;
     const p = voiceParams(rpm, !!this.res.loop);
     const vol = AUDIO.userVolume;
+    const dop = flight.doppler ?? 1;
+    const T = AUDIO.turtle;
+    const rev = flight.reverse ?? signedRpm < 0;
+
+    // Prop wash chop: depth follows severity; the LFO wanders across 10–30 Hz.
+    const C = AUDIO.chop;
+    this.chopHz = Math.min(C.hz[1], Math.max(C.hz[0], this.chopHz + (this.rand() - 0.5) * C.wanderPerS * 2 * dt * 10));
+    this.set(this.chopLfo.frequency, this.chopHz, now);
+    this.set(this.chopDepth.gain, C.depth * Math.min(1, Math.max(0, flight.chop ?? 0)), now);
 
     this.sinceTransient += dt;
     const strength = driven ? transientStrength(rpmRate) : 0;
@@ -190,15 +251,15 @@ export class MotorVoice {
     }
     this.bOvershoot *= Math.exp(-dt / this.bOvershootTau);
 
-    if (this.aSrc) this.set(this.aSrc.playbackRate, p.aRate, now);
+    if (this.aSrc) this.set(this.aSrc.playbackRate, p.aRate * dop, now);
     this.set(this.aGain.gain, p.aGain * vol.A, now);
-    this.set(this.bOsc.frequency, Math.max(1, p.bHz * (1 + this.bOvershoot)), now);
-    this.set(this.bGain.gain, p.bGain * vol.B, now);
-    this.set(this.cOsc.frequency, Math.max(1, p.cHz), now);
-    this.set(this.cOsc2.frequency, Math.max(2, p.cHz * 2), now);
-    this.set(this.cGain.gain, p.cGain * vol.C, now);
-    this.set(this.dFilter.frequency, p.dHz, now);
-    this.set(this.dGain.gain, p.dGain * vol.D, now);
+    this.set(this.bOsc.frequency, Math.max(1, p.bHz * (1 + this.bOvershoot) * dop), now);
+    this.set(this.bGain.gain, p.bGain * vol.B * (rev ? T.bladeCut : 1), now);
+    this.set(this.cOsc.frequency, Math.max(1, p.cHz * dop), now);
+    this.set(this.cOsc2.frequency, Math.max(2, p.cHz * 2 * dop), now);
+    this.set(this.cGain.gain, p.cGain * vol.C * (rev ? T.whineBoost : 1), now);
+    this.set(this.dFilter.frequency, p.dHz * dop, now);
+    this.set(this.dGain.gain, p.dGain * vol.D * (rev ? T.airBoost : 1), now);
 
     // Spool one-shot: keep the clip's pitch on the motor's pitch as both move.
     const s = this.spool;
@@ -221,7 +282,7 @@ export class MotorVoice {
 
   dispose(): void {
     this.stopSpool();
-    for (const n of [this.aSrc, this.bOsc, this.cOsc, this.cOsc2, this.dSrc]) n?.stop();
+    for (const n of [this.aSrc, this.bOsc, this.cOsc, this.cOsc2, this.dSrc, this.chopLfo]) n?.stop();
     this.panner.disconnect();
   }
 }

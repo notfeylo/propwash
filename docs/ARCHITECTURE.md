@@ -114,6 +114,8 @@ buildFieldLayout(terrain) primitives ─┼─▶ Rapier box / cylinder / ball c
 
 `src/world` is pure TypeScript, shared by the physics and the renderer, so what you see is what you hit. The drone's own colliders (hull, canister capsule, motor feet, prop-disc sensors) come from `drone.glb` via `tools/gen-colliders.mjs`. `FlightState` reports `onGround`, per-prop `propStrike` and the contact `impactG`; turtle mode reverses motors from the stick (`FlightController.turtle`).
 
+Prop wash (`src/sim/flight/PropWash.ts`) scales each rotor's thrust by `1 − loss·sev + fluct·sev·n(t)`, where `n` is seeded noise band-passed to 10–40 Hz and `sev` comes from the rotor's axial inflow against its induced velocity, faded by in-plane speed. Land mode (`src/sim/fc/autoland.ts`) is an autopilot that feeds virtual sticks to the Angle-mode FC (`FlightController.update(…, 'angle')`) inside the same 1 kHz step; `Powertrain` owns the switch, stick override and disarm on touchdown.
+
 ## Flight controller (`src/sim/fc`, Phase 2 PRD §3)
 
 ```
@@ -154,6 +156,8 @@ FC piezo + XT60 tick ── frame panner ─────────────
                                    └→ small-room convolver (orbit only) ┘   ▲
                                           FPV wind rumble (low-passed noise) ┘
 ```
+
+In flight (Phase 2 §6) the app adds to each audio frame: airspeed (layer F, air rush), prop wash severity (an LFO chopping layers A and D), a Doppler factor (outside views only), impacts with their surface (thump / knock / carbon crack) and prop-strike edges (tick + desync screech).
 
 The AudioContext is created on the first user gesture (autoplay policy). Without the git-ignored recording, `pnpm assets` skips the clips and the engine runs procedural-only (layers B–E), which is what the public build ships.
 

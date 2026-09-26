@@ -14,6 +14,7 @@ import type { AudioFrame, Vec3 } from '../audio/AudioEngine';
 import { LiveAudio } from '../audio/LiveAudio';
 import { WIND } from '../config/aero';
 import { AIRFRAMES, withPayload } from '../config/airframes';
+import { AUDIO } from '../config/audio';
 import { DRONE, LEDS, MODEL_CREDIT, PROP_BLEND } from '../config/drone';
 import { PHYSICS } from '../config/physics';
 import { FIELD_RENDER } from '../config/field';
@@ -82,6 +83,11 @@ export class App {
   /** The flight test field (Phase 2 §5), built when flight is on. */
   field: { terrain: Terrain; layout: FieldLayout; view: FieldView } | null = null;
   private windV = new Vector3();
+  private lastStrike = [false, false, false, false];
+  private lastListener = new Vector3();
+  private listenerVel = new Vector3();
+  private tmpA = new Vector3();
+  private tmpB = new Vector3();
   readonly audio = new LiveAudio();
   /** Debug/verification: fixed prop RPM instead of the motor model (null = model). */
   rpmOverride: number[] | null = null;
@@ -290,6 +296,13 @@ export class App {
     this.lastDronePos.copy(root.position);
     // The key light's tight shadow frustum travels with the drone.
     aimKeyLight(this.key, root.position);
+    // The antenna feels the real motion: specific force (minus 1 g vertical) and the air stream.
+    const s = this.flight.state;
+    const inv = root.quaternion.clone().invert();
+    const w = this.flight.wind.velocity;
+    this.tmpA.set(s.acceleration.x, s.acceleration.y, s.acceleration.z).applyQuaternion(inv);
+    this.tmpB.set(w.x - s.velocity.x, w.y - s.velocity.y, w.z - s.velocity.z).applyQuaternion(inv);
+    this.drone.setBodyMotion(this.tmpA, this.tmpB);
   }
 
   /** Push the current settings into the live objects (config-level values are applied too). */
@@ -422,7 +435,14 @@ export class App {
       else if (a === 'settings') this.toggleSettings();
       else if (a === 'reset') this.resetDrone();
       else if (a === 'modeCycle') this.cycleFlightMode();
-      else if (a === 'turtleToggle') {
+      else if (a === 'landToggle') {
+        if (!this.flight || !pt.power.armed) this.toast.show('Land mode needs the drone armed and flying', 2000);
+        else
+          this.toast.show(
+            pt.toggleAutoland() ? '<b>LAND</b>: flying home to land (move the sticks to take over)' : 'Land mode off',
+            2400,
+          );
+      } else if (a === 'turtleToggle') {
         pt.toggleTurtle();
         this.toast.show(
           pt.turtleSwitch
@@ -442,6 +462,8 @@ export class App {
       if (e.type === 'armRefused') this.toast.show(armBlockedMessage(e.reason, controls.device));
     this.updateHaptics(controls);
     if (pt.turtleDone) this.toast.show('Upright again: turtle off, <b>arm to fly</b>', 2400);
+    if (pt.autolandDone) this.toast.show('Landed where it took off: <b>disarmed</b>', 2400);
+    if (pt.autolandCancelled) this.toast.show('Land mode off: you have control', 2000);
 
     this.placeDrone();
     const rpms = this.rpmOverride ?? pt.rpms;
@@ -543,7 +565,9 @@ export class App {
     const p = pt.power;
     let warning: string | null = null;
     if (p.powered) {
-      if (pt.turtleSwitch) warning = 'CRASH FLIP';
+      if (pt.autoland && this.flight)
+        warning = `LAND ${Math.round(this.flight.autoland.distance(this.flight.state, this.flight.home))}M`;
+      else if (pt.turtleSwitch) warning = 'CRASH FLIP';
       else if (p.warning === 'THROTTLE') warning = 'THROTTLE';
       else if (p.warning === 'ANGLE') warning = 'ANGLE';
       else if (p.state === 'BOOTING') warning = 'BOOTING';
@@ -556,9 +580,11 @@ export class App {
         feed: this.cameras.feed,
         powered: p.powered,
         armed: p.armed,
-        flightMode: this.flight
-          ? ({ acro: 'ACRO', angle: 'ANGL', horizon: 'HOR' } as const)[this.settings.flightMode]
-          : 'ACRO',
+        flightMode: !this.flight
+          ? 'ACRO'
+          : pt.autoland
+            ? 'LAND'
+            : ({ acro: 'ACRO', angle: 'ANGL', horizon: 'HOR' } as const)[this.settings.flightMode],
         voltage: pt.battery.voltage,
         cellVoltage: pt.battery.cellVoltage,
         usedMah: pt.battery.usedMah,
@@ -612,7 +638,30 @@ export class App {
       },
       cameraMode: this.cameras.mode === 'orbit' ? 'orbit' : 'fpv',
       distance: this.cameras.mode === 'orbit' ? cam.position.distanceTo(this.controls.target) : 0,
+      ...this.flightAudio(dt, cam.position),
     };
+  }
+
+  /** Flight coupling for the audio frame (Phase 2 §6): air rush, prop wash, Doppler, hits. */
+  private flightAudio(dt: number, listener: Vector3): Partial<AudioFrame> {
+    const f = this.flight;
+    if (!f) return {};
+    const s = f.state;
+    if (dt > 0) this.listenerVel.copy(listener).sub(this.lastListener).divideScalar(dt);
+    this.lastListener.copy(listener);
+    // Doppler: positive when the drone moves away from the listener.
+    const toDrone = this.tmpA.set(s.position.x, s.position.y, s.position.z).sub(listener);
+    const d = toDrone.length() || 1;
+    const rel = this.tmpB.set(s.velocity.x, s.velocity.y, s.velocity.z).sub(this.listenerVel);
+    const away = rel.dot(toDrone) / d;
+    const D = AUDIO.doppler;
+    const doppler = Math.min(1 + D.maxShift, Math.max(1 - D.maxShift, D.speedOfSoundMs / (D.speedOfSoundMs + away)));
+    const strikes: number[] = [];
+    s.propStrike.forEach((hit, i) => {
+      if (hit && !this.lastStrike[i]) strikes.push(i);
+      this.lastStrike[i] = hit;
+    });
+    return { airspeed: s.airspeed, propWash: s.propWash, doppler, impacts: f.drainImpacts(), propStrikes: strikes };
   }
 
   get backend(): 'webgpu' | 'webgl2' {

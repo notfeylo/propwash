@@ -25,6 +25,17 @@ export interface AudioFrame {
   cameraMode: CameraAudioMode;
   /** Listener → drone distance, for air absorption (m). */
   distance: number;
+  // Flight coupling (Phase 2 §6); absent on the bench.
+  /** Airspeed (m/s): layer F wind rush. */
+  airspeed?: number;
+  /** Prop wash severity 0..1 (chop on A and D). */
+  propWash?: number;
+  /** Doppler pitch factor for the outside views (1 = none). */
+  doppler?: number;
+  /** Impacts this frame: contact acceleration (g) and what was hit. */
+  impacts?: readonly { g: number; surface: 'grass' | 'hard' }[];
+  /** Motors whose prop struck something this frame (M1..M4 indices). */
+  propStrikes?: readonly number[];
 }
 
 export interface AudioEngineOptions {
@@ -51,6 +62,11 @@ export class AudioEngine {
   private master: GainNode;
   private frameEmitter: PannerNode;
   private windGain: GainNode;
+  /** F: wind / air rush. */
+  private airGain: GainNode;
+  private airFilter: BiquadFilterNode;
+  private lastImpact = -Infinity;
+  private noise: AudioBuffer;
   private nextBeacon = 0;
   private nextLowBattery = 0;
 
@@ -77,6 +93,7 @@ export class AudioEngine {
     rand: () => number,
   ) {
     const c = ctx;
+    this.noise = res.noise;
     this.mode = res.loop ? 'recording' : 'procedural';
     const comp = AUDIO.master.compressor;
     const compressor = new DynamicsCompressorNode(c, {
@@ -104,6 +121,13 @@ export class AudioEngine {
     this.windGain = new GainNode(c, { gain: 0 });
     wind.connect(windLp).connect(this.windGain).connect(compressor);
     wind.start(0, 0.5);
+
+    // F: air rush over the airframe, band-passed noise rising with airspeed.
+    const air = new AudioBufferSourceNode(c, { buffer: res.noise, loop: true });
+    this.airFilter = new BiquadFilterNode(c, { type: 'bandpass', frequency: AUDIO.wind.centerHz[0], Q: AUDIO.wind.q });
+    this.airGain = new GainNode(c, { gain: 0 });
+    air.connect(this.airFilter).connect(this.airGain).connect(compressor);
+    air.start(0, 1.3);
 
     this.voices = Array.from({ length: 4 }, () => new MotorVoice(c, this.bus, res, rand));
     this.frameEmitter = new PannerNode(c, {
@@ -193,11 +217,25 @@ export class AudioEngine {
       this.nextLowBattery = now + lb.periodS;
     }
 
+    const outside = f.cameraMode !== 'fpv';
+    const dop = outside ? (f.doppler ?? 1) : 1;
     this.voices.forEach((v, i) => {
       const p = f.rotorPositions[i];
       if (p) v.setPosition(p[0], p[1], p[2]);
-      v.update(f.dt, f.rpms[i] ?? 0, f.rpmRates[i] ?? 0, f.driven);
+      v.update(f.dt, f.rpms[i] ?? 0, f.rpmRates[i] ?? 0, f.driven, { chop: f.propWash ?? 0, doppler: dop });
     });
+
+    // F: air rush. On board (FPV) it's right at the mic; outside it falls off with distance.
+    const W = AUDIO.wind;
+    const as = f.airspeed ?? 0;
+    const level =
+      Math.min(W.maxGain, W.gain * (as / W.refMs) ** 2) *
+      (outside ? 1 / (1 + f.distance / W.orbitFalloffM) : W.fpvBoost);
+    this.set(this.airGain.gain, level);
+    this.set(this.airFilter.frequency, W.centerHz[0] + (W.centerHz[1] - W.centerHz[0]) * Math.min(1, as / W.refMs));
+
+    for (const hit of f.impacts ?? []) this.impact(hit.g, hit.surface, now);
+    for (const i of f.propStrikes ?? []) this.voices[i]?.propStrike(f.rpms[i] ?? 0);
     const fp = f.framePosition;
     if (this.frameEmitter.positionX) {
       this.frameEmitter.positionX.value = fp[0];
@@ -216,6 +254,37 @@ export class AudioEngine {
     this.set(this.roomWet.gain, !fpv && AUDIO.room.enabled ? AUDIO.room.wet : 0);
     const load = f.rpms.reduce((s, r) => s + Math.min(1, r / DRONE.rpmMax) ** 2, 0) / (f.rpms.length || 1);
     this.set(this.windGain.gain, fpv ? AUDIO.fpv.windGain * load : 0);
+  }
+
+  /** A hit through the frame: grass thud or hard knock, plus a carbon crack; level ∝ log(g). */
+  private impact(g: number, surface: 'grass' | 'hard', now: number): void {
+    const I = AUDIO.impact;
+    if (g < I.minG || now - this.lastImpact < I.refractoryS) return;
+    this.lastImpact = now;
+    const k = Math.min(1, Math.log(g / I.minG) / Math.log(I.fullG / I.minG));
+    const burst = (filter: BiquadFilterNode, dur: number, gain: number) => {
+      const src = new AudioBufferSourceNode(this.ctx, { buffer: this.noise });
+      const env = new GainNode(this.ctx, { gain: 0 });
+      src.connect(filter).connect(env).connect(this.frameEmitter);
+      env.gain.setValueAtTime(gain, now);
+      env.gain.setTargetAtTime(0, now + 0.004, dur / 3);
+      src.start(now, Math.random() * 1.5);
+      src.stop(now + dur * 2);
+    };
+    const body =
+      surface === 'grass'
+        ? new BiquadFilterNode(this.ctx, { type: 'lowpass', frequency: I.grass.lowpassHz })
+        : new BiquadFilterNode(this.ctx, { type: 'bandpass', frequency: I.hard.bandHz, Q: I.hard.q });
+    burst(
+      body,
+      surface === 'grass' ? I.grass.durationS : I.hard.durationS,
+      I.gain * k * (surface === 'grass' ? 1.6 : 1),
+    );
+    burst(
+      new BiquadFilterNode(this.ctx, { type: 'highpass', frequency: I.crack.highpassHz }),
+      I.crack.durationS,
+      I.gain * I.crack.gain * k,
+    );
   }
 
   setMasterDb(db: number): void {

@@ -94,8 +94,10 @@ export const ANTENNA = {
   dampingRatio: 0.15,
   /** Angular acceleration (rad/s²) per unit vibration intensity, as band-limited noise. */
   vibrationDrive: 9,
-  /** Angular acceleration per m/s² of body acceleration (Phase 2 flight will drive this). */
+  /** Angular acceleration per m/s² of body acceleration (specific force: what the whip feels). */
   accelDrive: 0.9,
+  /** Airflow bends the whip back: angular acceleration per (m/s)² of airspeed. */
+  airDrive: 0.05,
   maxAngleRad: 12 * DEG,
   substepHz: 240,
 };
