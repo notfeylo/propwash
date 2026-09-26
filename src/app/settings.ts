@@ -1,5 +1,5 @@
 import { AUDIO, type AudioLayer } from '../config/audio';
-import { CAMERAS, type FeedStyle } from '../config/cameras';
+import { CAMERAS, type FeedStyle, type HdStabilization } from '../config/cameras';
 import {
   ARMING_FC,
   type AxisGains,
@@ -26,6 +26,7 @@ export interface Settings {
   feed: FeedStyle;
   whipPan: boolean;
   jello: boolean;
+  hdStabilization: HdStabilization;
   volume: number;
   layers: Record<AudioLayer, number>;
   payload: boolean;
@@ -81,6 +82,7 @@ export function defaultSettings(): Settings {
     feed: CAMERAS.fpv.defaultFeed,
     whipPan: CAMERAS.cut.whipPan,
     jello: CAMERAS.hd.jello.enabled,
+    hdStabilization: CAMERAS.hd.stabilization.default,
     volume: 0.8,
     layers: { ...AUDIO.userVolume },
     payload: true,

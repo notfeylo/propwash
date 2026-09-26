@@ -1,12 +1,17 @@
 // Camera views, feed styles and OSD (PRD §4.6).
 
-export type CameraMode = 'orbit' | 'fpv' | 'hd';
+export type CameraMode = 'orbit' | 'fpv' | 'chase' | 'los' | 'hd';
 export type FeedStyle = 'analog' | 'digital';
+/** HD/GoPro stabilization (Phase 2 §7): raw, smoothed (HyperSmooth-like), or horizon-locked. */
+export type HdStabilization = 'raw' | 'smooth' | 'horizon';
+
+/** Views that are a camera on the drone (video look, OSD); the rest are outside views. */
+export const isFeedView = (m: CameraMode) => m === 'fpv' || m === 'hd';
 
 const DEG = Math.PI / 180;
 
 export const CAMERAS = {
-  order: ['orbit', 'fpv', 'hd'] as CameraMode[],
+  order: ['orbit', 'fpv', 'chase', 'los', 'hd'] as CameraMode[],
   /** Switch: a quick dip through black, optionally with a whip-pan smear. */
   cut: { durationS: 0.15, whipPan: false, whipAmount: 0.18 },
 
@@ -45,8 +50,50 @@ export const CAMERAS = {
     vignette: 0.15,
   },
 
+  /** Chase (Phase 2 §7): a spring arm behind and above, looking ahead along the velocity. */
+  chase: {
+    distanceM: 2.4,
+    heightM: 0.8,
+    fovDeg: 78,
+    /** Aim point leads the drone by this much of its velocity (s), capped (m). */
+    lookAheadS: 0.22,
+    lookAheadMaxM: 6,
+    /** Critically damped spring (rad/s): higher is stiffer. Heading follows its own spring. */
+    springRads: 6,
+    headingRads: 3,
+    /** No-clip: stop this far in front of whatever is between drone and camera (m). */
+    clipMarginM: 0.3,
+    minAboveGroundM: 0.35,
+    /** Jumps farther than this (reset, teleport) snap instead of swinging (m). */
+    snapM: 25,
+    /** Feed-forward cap on the followed motion (m/s): seeks and resets don't fling it. */
+    maxFollowMs: 90,
+    near: 0.03,
+  },
+
+  /** Line of sight (Phase 2 §7): the pilot on the launch pad, eyes at 1.7 m, tracking with auto-zoom. */
+  los: {
+    /** Pilot position relative to the pad centre (m); the drone arms facing −Z, away from the pilot. */
+    position: [0.9, 1.7, 5] as const,
+    /** Auto-zoom: keep a subject this size (m) at `fill` of the frame height, within the FOV range. */
+    subjectM: 0.6,
+    fill: 0.1,
+    fovRangeDeg: [5, 60] as const,
+    zoomTauS: 0.6,
+    /** Head turn: aim smoothing (s). */
+    aimTauS: 0.08,
+    near: 0.1,
+  },
+
   hd: {
     hfovDeg: 118,
+    /** Stabilization: smoothing time constant and the crop that hides the rotated frame edges. */
+    stabilization: {
+      default: 'horizon' as HdStabilization,
+      smoothTauS: 0.18,
+      /** Stabilized views crop in like HyperSmooth / Gyroflow (fraction of the FOV kept). */
+      crop: 0.8,
+    },
     barrelK: 0.2,
     aspect: 16 / 9,
     /** Downward tilt of the action cam on its mount. */

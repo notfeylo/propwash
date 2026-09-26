@@ -150,7 +150,7 @@ export class OsdOverlay {
   }
 
   private layout(d: OsdData, blinkOn: boolean, recBlink: boolean): Item[] {
-    if (d.mode === 'orbit') return [];
+    if (d.mode !== 'fpv' && d.mode !== 'hd') return [];
     if (d.mode === 'hd') {
       const rec: Item = { text: `REC ${mmss(d.recTimeS)}`, col: 0, row: 0, align: 'left', anchor: 'topLeft' };
       return recBlink ? [{ ...rec, text: '', dot: true }, rec] : [rec];

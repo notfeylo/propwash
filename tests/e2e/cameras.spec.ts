@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate(() => window.__propwash!.setRenderPaused(true));
 });
 
-test('C cycles Orbit → FPV → HD → Orbit with the right overlays', async ({ page }) => {
+test('C cycles Orbit → FPV → Chase → LOS → HD → Orbit with the right overlays', async ({ page }) => {
   expect((await cam(page)).mode).toBe('orbit');
   await page.keyboard.press('KeyC');
   await waitMode(page, 'fpv');
@@ -37,6 +37,12 @@ test('C cycles Orbit → FPV → HD → Orbit with the right overlays', async ({
   c = await cam(page);
   expect(c.box.width / c.box.height).toBeCloseTo(16 / 9, 2);
 
+  await page.keyboard.press('KeyC');
+  await waitMode(page, 'chase');
+  expect((await cam(page)).osd).toEqual([]);
+  await page.keyboard.press('KeyC');
+  await waitMode(page, 'los');
+  expect((await cam(page)).osd).toEqual([]);
   await page.keyboard.press('KeyC');
   await waitMode(page, 'hd');
   await page.waitForFunction(() => window.__propwash!.camera().osd.some((l) => l.startsWith('REC ')), undefined, {

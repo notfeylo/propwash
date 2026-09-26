@@ -84,6 +84,9 @@ const KEY_LABELS: Record<KeyAction, string> = {
   modeCycle: 'Flight mode (Acro / Angle / Horizon)',
   turtleToggle: 'Turtle mode (flip over after crash)',
   landToggle: 'Land mode (fly home and land)',
+  flightLab: 'Flight Lab (blackbox graphs, CSV, log import)',
+  replay: 'Replay the last flight',
+  hdStabCycle: 'HD stabilization (raw / smooth / horizon lock)',
   yawLeft: 'Yaw left',
   yawRight: 'Yaw right',
   pitchForward: 'Pitch forward',
@@ -260,6 +263,15 @@ export class SettingsPanel {
       ${this.field('FPV field of view', 'Horizontal, before the fisheye', this.range('fpvFovDeg', fmin, fmax, 1))}
       ${this.field('Whip-pan on camera cuts', '', this.check('whipPan'))}
       ${this.field('HD rolling-shutter jello', 'Follows frame vibration', this.check('jello'))}
+      ${this.field(
+        'HD stabilization',
+        'Also K / D-pad →',
+        this.select('hdStabilization', [
+          ['raw', 'Raw'],
+          ['smooth', 'Smooth (HyperSmooth-like)'],
+          ['horizon', 'Horizon lock'],
+        ]),
+      )}
     </section>
     <section data-sec="Audio">
       ${this.field('Master volume', '', this.range('volume', 0, 1, 0.01))}
@@ -284,7 +296,7 @@ export class SettingsPanel {
       ${this.field('Stick deadzone', '', this.range('deadzone', 0, 0.3, 0.01))}
       ${this.field('Stick expo', '', this.range('expo', 0, 1, 0.05))}
       ${this.field('Rumble', 'Chrome desktop', this.check('rumble'))}
-      <div class="pw-pad-t"><b>R1</b>arm / disarm<b>L1 + R1</b>kill<b>Options (hold)</b>battery<b>△ / □</b>camera / feed<b>○</b>beacon<b>Touchpad</b>motor test<b>Share</b>payload<b>D-pad ↓</b>reset to pad<b>L2</b>flight mode<b>D-pad ↑</b>turtle mode<b>✕</b>land mode</div>
+      <div class="pw-pad-t"><b>R1</b>arm / disarm<b>L1 + R1</b>kill<b>Options (hold)</b>battery<b>△ / □</b>camera / feed<b>○</b>beacon<b>Touchpad</b>motor test<b>Share</b>payload<b>D-pad ↓</b>reset to pad<b>L2</b>flight mode<b>D-pad ↑</b>turtle mode<b>✕</b>land mode<b>D-pad ←</b>replay<b>D-pad →</b>HD stabilization</div>
       <h3>RC RADIO</h3>
       <button type="button" class="pw-btn" data-a="calibrate">CALIBRATE RADIO…</button>
       <h3>KEYBOARD <small style="letter-spacing:0">(click, then press a key)</small></h3>
