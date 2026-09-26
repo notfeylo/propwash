@@ -60,7 +60,9 @@ export class MotorVoice {
   private chopLfo: OscillatorNode;
   private chopDepth: GainNode;
   private chopHz: number;
-  private rand: () => number;
+  /** The chop's own random stream: the shared one sets the voices' phases and must not shift. */
+  private chopSeed: number;
+  private static count = 0;
   private sinceTransient = Infinity;
   private bOvershoot = 0;
   private bOvershootTau = 0.05;
@@ -73,7 +75,7 @@ export class MotorVoice {
     rand: () => number = Math.random,
   ) {
     const c = ctx;
-    this.rand = rand;
+    this.chopSeed = (0x9e3779b9 * ++MotorVoice.count) >>> 0;
     this.panner = new PannerNode(c, {
       panningModel: 'HRTF',
       distanceModel: 'inverse',
@@ -88,7 +90,7 @@ export class MotorVoice {
     this.beepInput.connect(this.panner);
     this.chop = new GainNode(c, { gain: 1 });
     this.chop.connect(this.sum);
-    this.chopHz = lerp(AUDIO.chop.hz[0], AUDIO.chop.hz[1], rand());
+    this.chopHz = lerp(AUDIO.chop.hz[0], AUDIO.chop.hz[1], this.chopRand());
     this.chopLfo = new OscillatorNode(c, { type: 'sine', frequency: this.chopHz });
     this.chopDepth = new GainNode(c, { gain: 0 });
     this.chopLfo.connect(this.chopDepth).connect(this.chop.gain);
@@ -163,6 +165,16 @@ export class MotorVoice {
     this.bOvershootTau = dur / 3;
   }
 
+  /** xorshift32 over the chop's seed, 0..1. */
+  private chopRand(): number {
+    let x = this.chopSeed || 1;
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    this.chopSeed = x >>> 0;
+    return this.chopSeed / 4294967296;
+  }
+
   /** Prop strike: a tick from this motor, plus an ESC desync screech when it happens at speed. */
   propStrike(rpm: number): void {
     const P = AUDIO.propStrike;
@@ -173,7 +185,7 @@ export class MotorVoice {
     src.connect(bp).connect(g).connect(this.beepInput);
     g.gain.setValueAtTime(P.gain * AUDIO.userVolume.E, now);
     g.gain.exponentialRampToValueAtTime(0.0001, now + P.tickS);
-    src.start(now, this.rand() * (this.res.noise.duration - 0.2));
+    src.start(now, Math.random() * (this.res.noise.duration - 0.2));
     src.stop(now + P.tickS + 0.02);
     if (Math.abs(rpm) < P.desyncMinRpm) return;
     // Desync: the ESC loses sync and the motor shrieks, a fast rough sweep.
@@ -239,7 +251,10 @@ export class MotorVoice {
 
     // Prop wash chop: depth follows severity; the LFO wanders across 10–30 Hz.
     const C = AUDIO.chop;
-    this.chopHz = Math.min(C.hz[1], Math.max(C.hz[0], this.chopHz + (this.rand() - 0.5) * C.wanderPerS * 2 * dt * 10));
+    this.chopHz = Math.min(
+      C.hz[1],
+      Math.max(C.hz[0], this.chopHz + (this.chopRand() - 0.5) * C.wanderPerS * 2 * dt * 10),
+    );
     this.set(this.chopLfo.frequency, this.chopHz, now);
     this.set(this.chopDepth.gain, C.depth * Math.min(1, Math.max(0, flight.chop ?? 0)), now);
 
