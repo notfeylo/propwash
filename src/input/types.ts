@@ -16,7 +16,9 @@ export type InputAction =
   /** Put the drone back on the launch pad (disarms). */
   | 'reset'
   /** Acro → Angle → Horizon. */
-  | 'modeCycle';
+  | 'modeCycle'
+  /** Turtle mode switch (flip over after crash). */
+  | 'turtleToggle';
 
 export type InputDevice = 'keyboard' | 'gamepad' | 'radio';
 

@@ -118,6 +118,9 @@ export interface DebugHandle {
     voltage: number;
     current: number;
     droppedSteps: number;
+    onGround: boolean;
+    propStrike: boolean[];
+    turtle: boolean;
   } | null;
   setWind(preset: 'calm' | 'light' | 'breezy'): void;
   resetDrone(): void;
@@ -126,6 +129,10 @@ export interface DebugHandle {
   /** Fixed roll/pitch/yaw sticks (−1..1), null = the input devices. */
   setSticks(sticks: { roll: number; pitch: number; yaw: number } | null): void;
   setFlightMode(mode: 'acro' | 'angle' | 'horizon'): void;
+  /** Put the drone at (x, z), `altitude` above the ground, rolled `rollDeg` (180 = upside down). */
+  placeDrone(x: number, z: number, altitude?: number, rollDeg?: number): void;
+  /** Turtle mode switch. */
+  setTurtle(on: boolean): void;
   /** Last flight-controller loop: setpoint and gyro (deg/s), PID terms, motor commands. */
   fc(): unknown;
   settings(): unknown;
@@ -277,6 +284,9 @@ export function exposeDebug(app: App): void {
         voltage: s.voltage,
         current: s.current,
         droppedSteps: f.droppedSteps,
+        onGround: s.onGround,
+        propStrike: [...s.propStrike],
+        turtle: app.powertrain.turtleActive,
       };
     },
     setWind: (w) => app.flight && (app.flight.wind.preset = w),
@@ -288,6 +298,18 @@ export function exposeDebug(app: App): void {
       if (app.flight) app.flight.fc.mode = mode;
     },
     fc: () => (app.flight ? JSON.parse(JSON.stringify(app.flight.fc.telemetry)) : null),
+    placeDrone(x, z, altitude = 0, rollDeg = 0) {
+      const f = app.flight;
+      if (!f) return;
+      const p = f.restingAt(x, z);
+      f.reset({ x: p.x, y: p.y + altitude, z: p.z });
+      const r = (rollDeg * Math.PI) / 360;
+      const q = { x: 0, y: 0, z: Math.sin(r), w: Math.cos(r) };
+      f.body.setRotation(q, true);
+      // A teleport isn't something the sensors saw: restart the FC's estimate and integrators.
+      f.fc.reset(q, f.inputs.sticks);
+    },
+    setTurtle: (on) => (app.powertrain.turtleSwitch = on),
     settings: () => JSON.parse(JSON.stringify(app.settings)),
     setUiHidden: (h) => app.setUiHidden(h),
     setCamera: (mode, instant) => app.cameras.setMode(mode, instant),

@@ -1,6 +1,7 @@
 import { AUDIO, type AudioLayer } from '../config/audio';
 import { CAMERAS, type FeedStyle } from '../config/cameras';
 import {
+  ARMING_FC,
   type AxisGains,
   type FlightMode,
   MIXER,
@@ -40,6 +41,7 @@ export interface Settings {
   flightMode: FlightMode;
   airmode: boolean;
   idealSensors: boolean;
+  crashDetection: boolean;
   ratesModel: RatesModel;
   ratesRP: RateParams;
   ratesYaw: RateParams;
@@ -93,6 +95,7 @@ export function defaultSettings(): Settings {
     flightMode: MODES.default,
     airmode: MIXER.airmode,
     idealSensors: SENSORS.ideal,
+    crashDetection: ARMING_FC.crashDetection.enabled,
     ratesModel: RATES.model,
     ratesRP: { ...RATES.defaults[RATES.model] },
     ratesYaw: { ...RATES.defaults[RATES.model] },
@@ -163,4 +166,5 @@ export function applyConfigSettings(s: Settings): void {
   HAPTICS.enabled = s.rumble;
   for (const [k, v] of Object.entries(s.keys)) KEYBOARD.keys[k as KeyAction] = [...v];
   MIXER.airmode = s.airmode;
+  ARMING_FC.crashDetection.enabled = s.crashDetection;
 }

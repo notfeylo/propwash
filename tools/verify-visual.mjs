@@ -27,7 +27,8 @@ page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 page.on('pageerror', (e) => errors.push(e.message));
 
 async function open(query = '') {
-  await page.goto(`${BASE}/?quality=high&dynres=0${query}`);
+  // The Phase 1 bench (no flight sim, no test field): these checks are about the drone rig.
+  await page.goto(`${BASE}/?quality=high&dynres=0&flight=0${query}`);
   await page.waitForFunction(() => window.__propwash?.ready === true, undefined, { timeout: 60_000 });
   await page.evaluate(() => {
     window.__propwash.freeze(true);

@@ -33,6 +33,7 @@ Keyboard, PS4 / PS5 controllers (Chrome's standard mapping) and USB RC radios al
 | Yaw / pitch / roll        | A / D, arrow keys (not for acro) | Left stick X, right stick              |
 | Flight mode               | Q (Acro / Angle / Horizon)       | L2                                     |
 | Reset to launch pad       | R                                | D-pad down                             |
+| Turtle mode (after crash) | T, then arm while upside down    | D-pad up                               |
 | Cycle camera / feed style | C / V                            | Triangle / Square                      |
 | Beacon                    | B                                | Circle                                 |
 | Motor test panel          | M                                | Touchpad                               |

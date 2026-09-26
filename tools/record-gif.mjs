@@ -1,8 +1,10 @@
-/* global window */
+/* global window, requestAnimationFrame */
 // tools/record-gif.mjs — `pnpm record:gif [baseUrl] [scenario]`
 // Renders a GIF of a scripted session. Scenarios:
 //   bench   (default) Phase 1 README GIF: plug → arm → throttle sweep → FPV → disarm, 20 s, bench model.
 //   liftoff Phase 2 group 1: arm and lift off the pad open loop (no flight controller), calm air.
+//   field   Phase 2 group 3: the test field. Take off and fly low with a flip, land on the pad,
+//           then a turtle flip on the grass and a hop. A scripted pilot closes the loop on the sim.
 //   flip    Phase 2 group 2: FPV (digital feed), Horizon mode: climb, roll flip, front flip, all through
 //           the flight controller (full stick flips; centred sticks self-level).
 // The sim clock is frozen and stepped exactly one GIF frame per capture, so the result is smooth
@@ -124,6 +126,78 @@ SCENARIOS.flip = {
   view: () => ({ position: [0.42, 0.26, 0.5] }),
 };
 
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+SCENARIOS.field = {
+  out: 'docs/media/phase2-field.gif',
+  seconds: 17,
+  query: '?quality=ultra&dynres=0&airframe=freestyle7',
+  gif: { width: 560, fps: 12, colors: 96 },
+  hide: '.pw-audio, .pw-keys, .pw-input, .pw-hud-tools',
+  /** Control sub-steps per GIF frame (the scripted pilot runs at 45 Hz). */
+  substeps: 3,
+  async setup(page) {
+    await page.waitForFunction(() => window.__propwash.flight() !== null, undefined, { timeout: 60_000 });
+    await page.evaluate(() => {
+      const p = window.__propwash;
+      p.setFlightMode('horizon');
+      p.setFollow(false);
+      p.plug();
+    });
+    await page.waitForFunction(() => window.__propwash.power().state === 'DISARMED', undefined, { timeout: 20_000 });
+  },
+  /**
+   * The pilot: altitude and descent holds on the throttle, stick inputs by time.
+   * @param t seconds · @param f flight state · @param pw power state · @param mem scratch memory
+   */
+  control(t, f, pw, mem) {
+    const y = f.position[1];
+    const vy = f.velocity[1];
+    const out = { throttle: 0, sticks: { roll: 0, pitch: 0, yaw: 0 }, actions: [] };
+    const once = (key, action) => {
+      if (!mem[key]) {
+        mem[key] = true;
+        out.actions.push(action);
+      }
+    };
+    if (t < 6.4) {
+      // A: take off, hold ~3 m, fly forward low over the grass, roll flip at 4 s.
+      once('armA', 'arm');
+      const hold = 0.27 + clamp(0.09 * (3 - y) - 0.08 * vy, -0.12, 0.2);
+      out.throttle = t < 0.5 ? 0 : hold / Math.cos(Math.min(0.5, f.tiltDeg * (Math.PI / 180)));
+      if (t > 1.6) out.sticks.pitch = 0.3;
+      if (t >= 4 && t < 4 + 8 / 15) {
+        out.sticks = { roll: 1, pitch: 0, yaw: 0 };
+        out.throttle = 0.2;
+      }
+    } else if (t < 11) {
+      // B: back over the pad at 2.5 m, descend at 1 m/s, throttle off on contact, disarm.
+      once('placeB', 'place:0,0,2.5,0');
+      if (!mem.touch) out.throttle = clamp(0.263 + 0.25 * (-1 - vy), 0.05, 0.6);
+      if (f.onGround && !mem.touch) mem.touch = t;
+      if (mem.touch && t > mem.touch + 0.4) once('disarmB', 'disarm');
+    } else {
+      // C: upside down on the grass: turtle flips it, then re-arm and hop.
+      once('placeC', 'place:3,2.5,0.3,180');
+      if (t > 12) once('turtle', 'turtle');
+      if (t > 12.2) once('armTurtle', 'arm');
+      if (pw.state !== 'OFF' && t > 12.4 && !mem.upright) {
+        out.sticks.roll = 0.8;
+        if (f.tiltDeg < 35 && f.onGround) mem.upright = t;
+      }
+      if (mem.upright && t > mem.upright + 0.9) once('rearm', 'arm');
+      if (mem.upright && t > mem.upright + 1.1) out.throttle = clamp(0.263 + 0.12 * (0.9 - y) - 0.12 * vy, 0.15, 0.4);
+    }
+    return out;
+  },
+  view(t, f) {
+    const [x, y, z] = f ? f.position : [0, 0, 0];
+    if (t < 6.4) return { position: [x + 1.6, y + 0.9, z + 2.6], target: [x, y + 0.1, z - 1], fov: 55 };
+    if (t < 11) return { position: [2.2, 1.4, 3.2], target: [0, 0.8, 0], fov: 50 };
+    return { position: [4.6, 0.9, 4.4], target: [3, 0.25, 2.5], fov: 50 };
+  },
+  events: [],
+};
+
 const name = process.argv[3] ?? 'bench';
 const S = SCENARIOS[name];
 if (!S) throw new Error(`unknown scenario "${name}" (${Object.keys(SCENARIOS).join(', ')})`);
@@ -155,8 +229,51 @@ if (!reuse) {
   const d = (fn, arg) => page.evaluate(fn, arg);
 
   const frames = FPS * S.seconds;
+  const mem = {};
   for (let f = 0; f < frames; f++) {
     const t = f / FPS;
+    if (S.control) {
+      // Closed loop: read the sim, let the scripted pilot decide, step, repeat.
+      for (let k = 0; k < S.substeps; k++) {
+        const tk = t + k / (FPS * S.substeps);
+        const st = await d(() => ({ f: window.__propwash.flight(), pw: window.__propwash.power() }));
+        const c = S.control(tk, st.f, st.pw, mem);
+        await d(
+          async ({ c, view, dt }) => {
+            const p = window.__propwash;
+            for (const a of c.actions) {
+              if (a === 'arm') p.arm();
+              else if (a === 'disarm') p.disarm();
+              else if (a === 'turtle') p.setTurtle(true);
+              else if (a.startsWith('place:')) {
+                const [x, z, alt, roll] = a.slice(6).split(',').map(Number);
+                p.placeDrone(x, z, alt, roll);
+              }
+            }
+            p.setView(view.position, view.target, view.fov);
+            p.setThrottle(c.throttle);
+            p.setSticks(c.sticks);
+            p.step(dt);
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          },
+          { c, view: S.view(tk, st.f), dt: 1 / (FPS * S.substeps) },
+        );
+      }
+      if (process.env.DRY) {
+        // Dry run: log the flight instead of capturing (to tune a scenario).
+        if (f % 5 === 0) {
+          const st = await d(() => ({ f: window.__propwash.flight(), pw: window.__propwash.power() }));
+          console.log(
+            `${t.toFixed(2)} ${st.pw.state} pos ${st.f.position.map((v) => v.toFixed(2)).join(',')} vy ${st.f.velocity[1].toFixed(2)} tilt ${st.f.tiltDeg.toFixed(0)} ground ${st.f.onGround} turtle ${st.f.turtle}`,
+          );
+        }
+        continue;
+      }
+      await page.waitForTimeout(60);
+      await page.screenshot({ path: path.join(tmp, `f${String(f).padStart(4, '0')}.png`) });
+      if (f % 30 === 0) process.stdout.write(`frame ${f}/${frames}\r`);
+      continue;
+    }
     for (const [at, what] of S.events) {
       if (at <= t && at > t - 1 / FPS) {
         await d((w) => {
@@ -187,6 +304,7 @@ if (!reuse) {
     if (f % 30 === 0) process.stdout.write(`frame ${f}/${frames}\r`);
   }
   await browser.close();
+  if (process.env.DRY) process.exit(0);
   if (errors.length) console.error('console errors:\n' + errors.join('\n'));
 }
 

@@ -17,6 +17,7 @@ const ACTIONS: InputAction[] = [
   'settings',
   'reset',
   'modeCycle',
+  'turtleToggle',
 ];
 
 /** Keys that steer; the page must not scroll on them. */

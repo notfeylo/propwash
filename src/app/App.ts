@@ -16,8 +16,12 @@ import { WIND } from '../config/aero';
 import { AIRFRAMES, withPayload } from '../config/airframes';
 import { DRONE, LEDS, MODEL_CREDIT, PROP_BLEND } from '../config/drone';
 import { PHYSICS } from '../config/physics';
+import { FIELD_RENDER } from '../config/field';
+import { createField, type FieldView } from '../render/field';
+import { buildFieldLayout, type FieldLayout } from '../world/fieldLayout';
+import { Terrain } from '../world/terrain';
 import type { FlightSim } from '../sim/flight/FlightSim';
-import { ENVIRONMENT, QUALITY, RENDER, type QualityPreset } from '../config/render';
+import { QUALITY, RENDER, type QualityPreset } from '../config/render';
 import { DroneModel } from '../drone/DroneModel';
 import { createBench } from '../render/bench';
 import { createEnvironment, type Environment } from '../render/environment';
@@ -75,6 +79,9 @@ export class App {
   private lastDronePos = new Vector3();
   /** The orbit view follows the drone in flight (recordings turn it off for a fixed shot). */
   followDrone = true;
+  /** The flight test field (Phase 2 §5), built when flight is on. */
+  field: { terrain: Terrain; layout: FieldLayout; view: FieldView } | null = null;
+  private windV = new Vector3();
   readonly audio = new LiveAudio();
   /** Debug/verification: fixed prop RPM instead of the motor model (null = model). */
   rpmOverride: number[] | null = null;
@@ -186,7 +193,18 @@ export class App {
     this.scene.add(bench.group);
     const [env, drone] = await Promise.all([createEnvironment(this.scene), DroneModel.load()]);
     this.environment = env;
-    if (params.background) env.setBackground(params.background);
+    if (params.flight) {
+      // The test field replaces the bench floor (the pad stays); the physics gets the same field.
+      const terrain = new Terrain();
+      const layout = buildFieldLayout(terrain);
+      this.field = { terrain, layout, view: createField(this.scene, terrain, layout) };
+      const floor = bench.group.getObjectByName('floor');
+      if (floor) floor.visible = false;
+      for (const cam of [this.camera, this.cameras.fpv, this.cameras.hd]) {
+        cam.far = FIELD_RENDER.farM;
+        cam.updateProjectionMatrix();
+      }
+    } else if (params.background) env.setBackground(params.background);
 
     this.drone = drone;
     this.scene.add(drone.root);
@@ -231,13 +249,14 @@ export class App {
         airframe: withPayload(base, base.id === 'longrange7_payload' || this.drone.payload.visible),
         wind: params.wind ?? WIND.default,
         groundY: this.padTopY,
+        field: this.field
+          ? { terrain: this.field.terrain, layout: this.field.layout, padTopY: this.padTopY }
+          : undefined,
       });
       if (sim.airframe.payload !== this.drone.payload.visible) this.drone.setPayloadVisible(sim.airframe.payload);
       this.powertrain.attachFlight(sim);
       this.flight = sim;
       this.applyFcSettings();
-      const fade = ENVIRONMENT.flightFloorFade;
-      this.environment.setFloorFade(fade.startM, fade.endM);
       this.lastDronePos.copy(this.drone.root.position);
     } catch (err) {
       console.warn('Flight physics unavailable, staying on the bench:', err);
@@ -269,6 +288,8 @@ export class App {
       this.controls.target.add(d);
     }
     this.lastDronePos.copy(root.position);
+    // The key light's tight shadow frustum travels with the drone.
+    aimKeyLight(this.key, root.position);
   }
 
   /** Push the current settings into the live objects (config-level values are applied too). */
@@ -401,6 +422,15 @@ export class App {
       else if (a === 'settings') this.toggleSettings();
       else if (a === 'reset') this.resetDrone();
       else if (a === 'modeCycle') this.cycleFlightMode();
+      else if (a === 'turtleToggle') {
+        pt.toggleTurtle();
+        this.toast.show(
+          pt.turtleSwitch
+            ? 'Turtle mode <b>ON</b>: arm while upside down, then push the stick to the side to lift'
+            : 'Turtle mode off',
+          2400,
+        );
+      }
     }
     if (controls.kill && pt.power.armed) pt.kill();
     pt.throttle = this.throttleOverride ?? controls.throttle;
@@ -411,6 +441,7 @@ export class App {
     for (const e of this.lastEvents)
       if (e.type === 'armRefused') this.toast.show(armBlockedMessage(e.reason, controls.device));
     this.updateHaptics(controls);
+    if (pt.turtleDone) this.toast.show('Upright again: turtle off, <b>arm to fly</b>', 2400);
 
     this.placeDrone();
     const rpms = this.rpmOverride ?? pt.rpms;
@@ -418,6 +449,11 @@ export class App {
     this.drone.update(simDt, this.simFrozen ? PROP_BLEND.nominalFrameDtS : dt);
     this.updateLeds();
     this.cameras.update(dt, { fpvSignal: pt.power.powered, vibration: this.drone.vibrationIntensity });
+    if (this.field) {
+      const w = this.flight?.wind.velocity;
+      this.windV.set(w?.x ?? 0, w?.y ?? 0, w?.z ?? 0);
+      this.field.view.update(this.cameras.renderCamera.position, this.windV);
+    }
     this.audio.update(this.audioFrame(simDt, rpms));
     this.prevRpms = [...rpms];
     if (this.lastEvents.some((e) => e.type === 'plugged')) this.armedTimeS = 0;
@@ -507,7 +543,8 @@ export class App {
     const p = pt.power;
     let warning: string | null = null;
     if (p.powered) {
-      if (p.warning === 'THROTTLE') warning = 'THROTTLE';
+      if (pt.turtleSwitch) warning = 'CRASH FLIP';
+      else if (p.warning === 'THROTTLE') warning = 'THROTTLE';
       else if (p.warning === 'ANGLE') warning = 'ANGLE';
       else if (p.state === 'BOOTING') warning = 'BOOTING';
       else if (pt.battery.lowWarning) warning = 'LOW BATTERY';
