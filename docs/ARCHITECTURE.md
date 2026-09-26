@@ -103,6 +103,17 @@ render ◀── interpolated pose (previous ⇄ current state), per-motor RPM, 
 
 `src/sim` has no three.js or DOM imports and runs headless in Vitest. Constants live in `src/config/airframes/*.ts` (SI units), `src/config/aero.ts` and `src/config/physics.ts`. `src/sim/frames.ts` is the only place axis conventions convert: three.js body axes ↔ flight axes (roll right, pitch nose-down and yaw right are positive). All noise comes from seeded streams (`src/sim/rng.ts`), so a seed plus an input log replays bit-identically. Rapier (the deterministic build) is imported after the first frame; until then, and with `?flight=0`, the Phase 1 bench model drives the props.
 
+## Test field (`src/world`, `src/render/field.ts`, Phase 2 PRD §5)
+
+```
+Terrain (seeded heightfield, 600 m) ──┬─▶ Rapier heightfield collider   (FlightSim)
+buildFieldLayout(terrain) primitives ─┼─▶ Rapier box / cylinder / ball colliders
+                                      └─▶ terrain mesh, instanced objects, grass near the camera,
+                                          wind flags, SkyMesh sky, distance fog   (render/field.ts)
+```
+
+`src/world` is pure TypeScript, shared by the physics and the renderer, so what you see is what you hit. The drone's own colliders (hull, canister capsule, motor feet, prop-disc sensors) come from `drone.glb` via `tools/gen-colliders.mjs`. `FlightState` reports `onGround`, per-prop `propStrike` and the contact `impactG`; turtle mode reverses motors from the stick (`FlightController.turtle`).
+
 ## Flight controller (`src/sim/fc`, Phase 2 PRD §3)
 
 ```

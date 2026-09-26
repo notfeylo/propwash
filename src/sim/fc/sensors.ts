@@ -93,9 +93,11 @@ export class Accelerometer {
     this.reset();
   }
 
-  reset(): void {
-    this.filtered = v3(0, 9.81, 0);
-    this.lpf.forEach((f, i) => f.reset([0, 9.81, 0][i]));
+  /** Seed the filters with gravity as seen at attitude `q` (level if omitted). */
+  reset(q?: Quat, gravity = 9.81): void {
+    const g = q ? worldToBody(q, v3(0, gravity, 0)) : v3(0, gravity, 0);
+    this.filtered = g;
+    this.lpf.forEach((f, i) => f.reset([g.x, g.y, g.z][i]));
   }
 
   /** @param accelWorld CoM acceleration (world, gravity included) */
@@ -107,6 +109,22 @@ export class Accelerometer {
     this.filtered = v3(out[0], out[1], out[2]);
     return this.filtered;
   }
+}
+
+/** Rotation taking unit vector `from` onto unit vector `to`. */
+function fromUnitVectors(from: V3, to: V3): Quat {
+  const d = dot(from, to);
+  if (d < -0.999999) {
+    // Opposite: any axis perpendicular to `from`.
+    let axis = cross(v3(1, 0, 0), from);
+    if (len(axis) < 1e-6) axis = cross(v3(0, 0, 1), from);
+    const n = len(axis);
+    return { x: axis.x / n, y: axis.y / n, z: axis.z / n, w: 0 };
+  }
+  const c = cross(from, to);
+  const q = { x: c.x, y: c.y, z: c.z, w: 1 + d };
+  const n = Math.hypot(q.x, q.y, q.z, q.w);
+  return { x: q.x / n, y: q.y / n, z: q.z / n, w: q.w / n };
 }
 
 /**
@@ -123,16 +141,23 @@ export class AttitudeEstimator {
     this.integral = v3();
   }
 
-  update(gyroBody: V3, accBody: V3, gravity: number, dt: number): Quat {
+  /** @param armed disarmed, the accelerometer is trusted far more (fast levelling before arming) */
+  update(gyroBody: V3, accBody: V3, gravity: number, dt: number, armed = true): Quat {
     const a = SENSORS.attitude;
     let w = gyroBody;
     const an = len(accBody);
     if (an > 1e-6 && Math.abs(an / gravity - 1) < a.accTrustBandG) {
       const measuredUp = scale(accBody, 1 / an);
       const estUp = worldToBody(this.q, v3(0, 1, 0));
+      if (!armed && dot(measuredUp, estUp) < Math.cos((a.snapDeg * Math.PI) / 180)) {
+        // Far off (the cross product vanishes near 180°): take the accelerometer's attitude.
+        this.q = fromUnitVectors(measuredUp, v3(0, 1, 0));
+        this.integral = v3();
+        return this.q;
+      }
       const err = cross(measuredUp, estUp);
       this.integral = add(this.integral, scale(err, a.ki * dt));
-      w = add(w, add(scale(err, a.kp), this.integral));
+      w = add(w, add(scale(err, a.kp * (armed ? 1 : a.disarmedKpScale)), this.integral));
     }
     // q̇ = ½ q ⊗ (0, ω)
     const dq = quatMul(this.q, { x: w.x, y: w.y, z: w.z, w: 0 });

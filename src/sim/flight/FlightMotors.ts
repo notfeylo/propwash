@@ -1,3 +1,4 @@
+import { TURTLE } from '../../config/aero';
 import { MOTOR_PROP, ROTORS } from '../../config/airframes';
 import { ARMING } from '../../config/motor';
 import type { Rng } from '../rng';
@@ -32,14 +33,16 @@ export function groundEffect(h: number, m = MOTOR_PROP): number {
  * rotor height h above the ground: T = kT·ω²·clamp(1 − v_in/(K_eff·v_pitch), 0, 1.2)·GE(h).
  */
 export function thrust(omega: number, vIn: number, h: number, m = MOTOR_PROP): number {
-  if (omega <= 0) return 0;
+  if (omega === 0) return 0;
+  // Reverse (turtle): the prop pushes the other way, much less efficiently; no inflow model.
+  if (omega < 0) return -TURTLE.reverseThrustFactor * m.kT * omega * omega * groundEffect(h, m);
   const vPitch = (omega / (2 * Math.PI)) * m.pitchM;
   const inflow = Math.min(m.inflowFactorMax, Math.max(0, 1 - vIn / (m.kEff * vPitch)));
   return m.kT * omega * omega * inflow * groundEffect(h, m);
 }
 
 export interface MotorState {
-  /** Rotor speed (rad/s, ≥ 0; reverse spin arrives with turtle mode). */
+  /** Rotor speed (rad/s); negative while spinning in reverse (turtle mode). */
   omega: number;
   /** dω/dt over the last step (rad/s²), for the rotor-inertia yaw kick and the audio transients. */
   domega: number;
@@ -81,27 +84,28 @@ export class FlightMotors {
 
   /**
    * Advance one fixed step.
-   * @param cmds per-motor command 0..1
+   * @param cmds per-motor command 0..1, or −1..0 for reverse (turtle mode, with `stopAtZero`)
    * @param vLoaded pack voltage under load (V)
-   * @param stopAtZero motor test: a 0 command stops the motor instead of idling
+   * @param stopAtZero motor test and turtle: a 0 command stops the motor instead of idling
    */
   step(h: number, cmds: readonly number[], vLoaded: number, stopAtZero = false): void {
     const m = this.m;
     this.motors.forEach((s, i) => {
       const prev = s.omega;
       if (this.drive === 'driven' && vLoaded > 0) {
-        let goal = stopAtZero && cmds[i] <= 0 ? 0 : omegaCmd(cmds[i] ?? 0, vLoaded, m);
+        const c = cmds[i] ?? 0;
+        let goal = stopAtZero && c <= 0 ? (c < 0 ? -omegaCmd(-c, vLoaded, m) : 0) : omegaCmd(c, vLoaded, m);
         const r = this.ramp[i];
         if (r.t < r.delay + r.len) {
           r.t += h;
           // Never pull a still-coasting prop down to the ramp.
           goal = Math.max(s.omega, goal * smoothstep((r.t - r.delay) / r.len));
         }
-        const tau = goal > s.omega ? m.tauUpS : m.tauDownS;
+        const tau = Math.abs(goal) > Math.abs(s.omega) ? m.tauUpS : m.tauDownS;
         s.omega = goal + (s.omega - goal) * Math.exp(-h / tau);
       } else {
         s.omega *= Math.exp(-h / m.tauCoastS);
-        if (s.omega < m.stopRads) s.omega = 0;
+        if (Math.abs(s.omega) < m.stopRads) s.omega = 0;
       }
       s.domega = (s.omega - prev) / h;
     });

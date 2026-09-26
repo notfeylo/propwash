@@ -1,7 +1,11 @@
 import type RAPIER_NS from '@dimforge/rapier3d-deterministic-compat';
-import type { WindPreset } from '../../config/aero';
+import { TURTLE, type WindPreset } from '../../config/aero';
 import { type Airframe, MOTOR_PROP, ROTORS } from '../../config/airframes';
-import { FLIGHT_COLLIDER, PHYSICS } from '../../config/physics';
+import { HULL_POINTS, MOTOR_FEET, PAYLOAD_CAPSULE } from '../../config/airframes/colliders';
+import { ARMING_FC } from '../../config/fc';
+import { DRONE_COLLIDERS, IMPACT, PAD_COLLIDER, PHYSICS } from '../../config/physics';
+import type { FieldLayout } from '../../world/fieldLayout';
+import type { Terrain } from '../../world/terrain';
 import { FlightController, type Sticks } from '../fc/FlightController';
 import { BODY, type FlightAxes, flightToBody } from '../frames';
 import { Rng } from '../rng';
@@ -37,6 +41,8 @@ export interface FlightInputs {
   sticks?: Sticks;
   /** Motor test: a 0 command stops the motor rather than idling. */
   stopAtZero?: boolean;
+  /** Turtle mode (flip over after crash): the sticks spin motors in reverse. */
+  turtle?: boolean;
 }
 
 /** Everything render, audio and the tests read. Plain data: safe to copy to a worker later. */
@@ -57,6 +63,12 @@ export interface FlightState {
   voltage: number;
   current: number;
   usedMah: number;
+  /** A drone collider is touching the ground or an object. */
+  onGround: boolean;
+  /** Per prop: its disc is inside the ground or an object this step (prop strike). */
+  propStrike: boolean[];
+  /** Contact acceleration this step (g): what the ground or an object did to the drone. */
+  impactG: number;
 }
 
 export interface FlightSimOptions {
@@ -64,8 +76,10 @@ export interface FlightSimOptions {
   airframe: Airframe;
   seed?: number;
   wind?: WindPreset;
-  /** Height of the flat ground / pad top (world y, m). */
+  /** Height of the flat ground / pad top (world y, m), when there is no field. */
   groundY?: number;
+  /** The test field: heightfield, objects and the launch pad (PRD §5). Flat ground without it. */
+  field?: { terrain: Terrain; layout: FieldLayout; padTopY: number };
   /** Where the model origin starts (world, m); defaults to resting on the ground at the origin. */
   spawn?: V3;
   /** Heading of the nose at spawn (rad, clockwise from −Z). */
@@ -103,7 +117,13 @@ export class FlightSim {
   droppedSteps = 0;
   /** Per-frame step cap; offline stepping (screenshots, recordings) lifts it. */
   maxStepsPerFrame = PHYSICS.maxStepsPerFrame;
-  private collider: RAPIER_NS.Collider;
+  private colliders: RAPIER_NS.Collider[] = [];
+  private propSensors: RAPIER_NS.Collider[] = [];
+  /** World-frame force applied last step (N), to separate contact forces from ours. */
+  private lastForce = v3();
+  /** Latched impacts since the owner last read them (crash detection, sounds). */
+  impacts: { g: number; time: number }[] = [];
+  private readonly field: FlightSimOptions['field'];
   private acc = 0;
   private stepIndex = 0;
   private lastVel = v3();
@@ -124,13 +144,17 @@ export class FlightSim {
 
     this.world = new R.World({ x: 0, y: -PHYSICS.gravity, z: 0 });
     this.world.timestep = this.h;
-    const ground = R.ColliderDesc.cuboid(1000, 0.5, 1000)
-      .setTranslation(0, this.groundY - 0.5, 0)
-      .setFriction(PHYSICS.contact.friction)
-      .setRestitution(PHYSICS.contact.restitution);
-    this.world.createCollider(ground);
+    this.field = o.field;
+    if (o.field) this.buildField(o.field);
+    else {
+      const ground = R.ColliderDesc.cuboid(1000, 0.5, 1000)
+        .setTranslation(0, this.groundY - 0.5, 0)
+        .setFriction(PHYSICS.contact.friction)
+        .setRestitution(PHYSICS.contact.restitution);
+      this.world.createCollider(ground);
+    }
 
-    const spawn = o.spawn ?? v3(0, this.groundY - this.bottomY(o.airframe), 0);
+    const spawn = o.spawn ?? this.restingAt(0, 0, o.airframe);
     const q = yawQuat(o.spawnYaw ?? 0);
     const desc = R.RigidBodyDesc.dynamic()
       .setTranslation(spawn.x, spawn.y, spawn.z)
@@ -139,25 +163,95 @@ export class FlightSim {
       .setCcdEnabled(true);
     this.body = this.world.createRigidBody(desc);
     this.applyMassProperties();
-    this.collider = this.world.createCollider(this.colliderDesc(o.airframe), this.body);
+    this.buildDroneColliders(o.airframe);
     this.lastVel = v3();
     this.state = this.snapshot();
     this.prev = this.state;
   }
 
-  /** Model-frame y of the lowest collider point (the pad contact). */
-  bottomY(a: Airframe = this.airframe): number {
-    return a.payload ? FLIGHT_COLLIDER.payloadBottomY : FLIGHT_COLLIDER.frameBottomY;
+  /** Ground height under (x, z): the pad top on the pad, else the terrain (or the flat ground). */
+  groundAt(x: number, z: number): number {
+    const f = this.field;
+    if (!f) return this.groundY;
+    if (Math.hypot(x, z) <= PAD_COLLIDER.radiusM) return f.padTopY;
+    return f.terrain.heightAt(x, z);
   }
 
-  private colliderDesc(a: Airframe): RAPIER_NS.ColliderDesc {
-    const c = FLIGHT_COLLIDER;
-    const bottom = this.bottomY(a);
-    return this.R.ColliderDesc.cuboid(c.halfX, (c.topY - bottom) / 2, c.halfZ)
-      .setTranslation(0, (c.topY + bottom) / 2, 0)
-      .setDensity(0) // mass comes only from the airframe's explicit properties
-      .setFriction(PHYSICS.contact.friction)
-      .setRestitution(PHYSICS.contact.restitution);
+  /** Model-frame y of the lowest collider point when level (what rests on the ground). */
+  bottomY(a: Airframe = this.airframe): number {
+    let y = Math.min(...HULL_POINTS.map((p) => p[1]), ...MOTOR_FEET.map((p) => p[1] - DRONE_COLLIDERS.footRadiusM));
+    if (a.payload) y = Math.min(y, PAYLOAD_CAPSULE.center[1] - PAYLOAD_CAPSULE.radius);
+    return y;
+  }
+
+  /** Heightfield, the launch pad and every field object as fixed colliders. */
+  private buildField(f: NonNullable<FlightSimOptions['field']>): void {
+    const R = this.R;
+    const { terrain, layout } = f;
+    const n = terrain.cells + 1;
+    // Rapier's heightfield is column-major with rows along z and columns along x.
+    const hs = new Float32Array(n * n);
+    for (let ix = 0; ix < n; ix++) for (let iz = 0; iz < n; iz++) hs[ix * n + iz] = terrain.heights[iz * n + ix];
+    const mat = (d: RAPIER_NS.ColliderDesc) =>
+      d.setFriction(PHYSICS.contact.friction).setRestitution(PHYSICS.contact.restitution);
+    this.world.createCollider(
+      mat(R.ColliderDesc.heightfield(terrain.cells, terrain.cells, hs, { x: terrain.size, y: 1, z: terrain.size })),
+    );
+    const t = PAD_COLLIDER.thicknessM;
+    this.world.createCollider(
+      mat(R.ColliderDesc.cylinder(t / 2, PAD_COLLIDER.radiusM).setTranslation(0, f.padTopY - t / 2, 0)),
+    );
+    for (const p of layout.prims) {
+      const d =
+        p.shape === 'box'
+          ? R.ColliderDesc.cuboid(...p.halfExtents)
+          : p.shape === 'cylinder'
+            ? R.ColliderDesc.cylinder(p.halfHeight, p.radius)
+            : R.ColliderDesc.ball(p.radius);
+      const [x, y, z] = p.position;
+      const [qx, qy, qz, qw] = p.rotation;
+      this.world.createCollider(mat(d.setTranslation(x, y, z).setRotation({ x: qx, y: qy, z: qz, w: qw })));
+    }
+  }
+
+  /**
+   * The drone's collision set (PRD §5): convex hull of frame + stack + battery, a capsule for the
+   * canister when fitted, contact balls under the motors, and four prop-disc sensors.
+   */
+  private buildDroneColliders(a: Airframe): void {
+    const R = this.R;
+    for (const c of [...this.colliders, ...this.propSensors]) this.world.removeCollider(c, false);
+    this.colliders = [];
+    this.propSensors = [];
+    const solid = (d: RAPIER_NS.ColliderDesc | null) => {
+      if (!d) return;
+      d.setDensity(0) // mass comes only from the airframe's explicit properties
+        .setFriction(PHYSICS.contact.friction)
+        .setRestitution(PHYSICS.contact.restitution);
+      this.colliders.push(this.world.createCollider(d, this.body));
+    };
+    solid(R.ColliderDesc.convexHull(new Float32Array(HULL_POINTS.flat())));
+    for (const [x, y, z] of MOTOR_FEET) solid(R.ColliderDesc.ball(DRONE_COLLIDERS.footRadiusM).setTranslation(x, y, z));
+    if (a.payload) {
+      const c = PAYLOAD_CAPSULE;
+      // Rapier capsules run along local Y; turn it onto the canister's axis.
+      const q =
+        c.axis === 'z'
+          ? { x: Math.SQRT1_2, y: 0, z: 0, w: Math.SQRT1_2 }
+          : { x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 };
+      solid(
+        R.ColliderDesc.capsule(c.halfLength, c.radius)
+          .setTranslation(...c.center)
+          .setRotation(q),
+      );
+    }
+    for (const r of ROTORS) {
+      const d = R.ColliderDesc.cylinder(DRONE_COLLIDERS.propDiscHalfHeightM, MOTOR_PROP.propRadiusM)
+        .setTranslation(r.position[0], r.position[1], r.position[2])
+        .setSensor(true)
+        .setDensity(0);
+      this.propSensors.push(this.world.createCollider(d, this.body));
+    }
   }
 
   private applyMassProperties(): void {
@@ -183,8 +277,7 @@ export class FlightSim {
     this.airframe = a;
     this.fc.setAirframe(a);
     this.applyMassProperties();
-    this.world.removeCollider(this.collider, false);
-    this.collider = this.world.createCollider(this.colliderDesc(a), this.body);
+    this.buildDroneColliders(a);
   }
 
   get rpms(): number[] {
@@ -231,14 +324,19 @@ export class FlightSim {
       vLoaded: this.battery.voltage,
     };
     let cmd = inp.cmd;
-    if (inp.sticks && inp.driven) cmd = this.fc.update(truth, inp.sticks);
-    else this.fc.sense(truth);
+    let stopAtZero = inp.stopAtZero;
+    if (inp.sticks && inp.driven && inp.turtle) {
+      this.fc.sense(truth, false);
+      cmd = this.fc.turtle(inp.sticks);
+      stopAtZero = true;
+    } else if (inp.sticks && inp.driven) cmd = this.fc.update(truth, inp.sticks);
+    else this.fc.sense(truth, false);
 
     this.motors.drive = inp.driven && this.battery.connected ? 'driven' : 'coast';
-    this.motors.step(h, cmd, this.battery.connected ? this.battery.voltage : 0, inp.stopAtZero);
+    this.motors.step(h, cmd, this.battery.connected ? this.battery.voltage : 0, stopAtZero);
     this.battery.update(
       h,
-      ms.reduce((p, s) => p + m.kQ * s.omega * s.omega * s.omega, 0),
+      ms.reduce((p, s) => p + m.kQ * Math.abs(s.omega) ** 3, 0),
       this.motors.drive === 'driven',
     );
 
@@ -264,12 +362,12 @@ export class FlightSim {
       const vAir = sub(vPoint, windV);
       const vIn = dot(vAir, up);
       const vPerp = sub(vAir, scale(up, vIn));
-      const t = thrust(s.omega, vIn, pw.y - this.groundY);
+      const t = thrust(s.omega, vIn, pw.y - this.groundAt(pw.x, pw.z));
       thrusts.push(t);
-      const f = add(scale(up, t), scale(vPerp, -m.kD * s.omega));
+      const f = add(scale(up, t), scale(vPerp, -m.kD * Math.abs(s.omega)));
       force = add(force, f);
       torque = add(torque, cross(arm, f));
-      yawBody += -s.spin * (m.kQ * s.omega * s.omega + m.rotorInertia * s.domega);
+      yawBody += -s.spin * (m.kQ * s.omega * Math.abs(s.omega) + m.rotorInertia * s.domega);
       rotorMomentum += s.spin * m.rotorInertia * s.omega;
     });
     const wBody = rotateInv(q, w);
@@ -286,6 +384,7 @@ export class FlightSim {
     body.resetTorques(false);
     body.addForce(force, true);
     body.addTorque(torque, true);
+    this.lastForce = force;
     this.world.step();
     this.wind.step(h, len(vAirBody));
 
@@ -300,6 +399,38 @@ export class FlightSim {
     const accel = scale(sub(vel, this.lastVel), 1 / this.h);
     this.lastVel = vel;
     const ms = this.motors.motors;
+    // Contact acceleration = what happened minus what gravity and our forces explain.
+    const own = add(scale(this.lastForce, 1 / this.airframe.massKg), v3(0, -PHYSICS.gravity, 0));
+    const impactG = len(sub(accel, own)) / PHYSICS.gravity;
+    let onGround = false;
+    for (const c of this.colliders)
+      this.world.contactPairsWith(c, (other) => {
+        if (onGround) return;
+        this.world.contactPair(c, other, (manifold) => {
+          if (manifold.numContacts() > 0) onGround = true;
+        });
+      });
+    // Sensors catch objects; Rapier sensors don't report heightfields, so each prop disc's rim is
+    // also tested against the ground directly.
+    const q = toQuat(b.rotation());
+    const origin = toV3(b.translation());
+    const propStrike = this.propSensors.map((c, i) => {
+      let hit = false;
+      this.world.intersectionPairsWith(c, () => (hit = true));
+      if (hit) return true;
+      const r = ROTORS[i].position;
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2;
+        const p = add(
+          origin,
+          rotate(q, v3(r[0] + Math.cos(a) * MOTOR_PROP.propRadiusM, r[1], r[2] + Math.sin(a) * MOTOR_PROP.propRadiusM)),
+        );
+        if (p.y < this.groundAt(p.x, p.z)) return true;
+      }
+      return false;
+    });
+    if (onGround && impactG > IMPACT.minG && this.stepIndex > 0)
+      this.impacts.push({ g: impactG, time: this.stepIndex * this.h });
     return {
       time: this.stepIndex * this.h,
       step: this.stepIndex,
@@ -314,7 +445,27 @@ export class FlightSim {
       voltage: this.battery.voltage,
       current: this.battery.current,
       usedMah: this.battery.usedMah,
+      onGround,
+      propStrike,
+      impactG: onGround ? impactG : 0,
     };
+  }
+
+  /** Upside down (for turtle), from the FC's attitude estimate, and on the ground. */
+  get turtleReady(): boolean {
+    return this.state.onGround && this.fcTiltDeg > TURTLE.invertedDeg;
+  }
+
+  /** Upright again on the ground (turtle is done). */
+  get uprightOnGround(): boolean {
+    return this.state.onGround && this.fcTiltDeg < TURTLE.uprightDeg;
+  }
+
+  /** Crash detection (off by default, as in Betaflight): an impact above the threshold. */
+  takeCrash(): boolean {
+    const hit = ARMING_FC.crashDetection.enabled && this.impacts.some((i) => i.g > ARMING_FC.crashDetection.impactG);
+    this.impacts = [];
+    return hit;
   }
 
   /** Pose for rendering: interpolated between the last two fixed steps. */
@@ -326,8 +477,8 @@ export class FlightSim {
   }
 
   /** Model origin resting on the ground at (x, z). */
-  restingAt(x = 0, z = 0): V3 {
-    return v3(x, this.groundY - this.bottomY(), z);
+  restingAt(x = 0, z = 0, a: Airframe = this.airframe): V3 {
+    return v3(x, this.groundAt(x, z) - this.bottomY(a), z);
   }
 
   /** Put the drone back at rest (launch pad reset); motors and pack keep their state. */

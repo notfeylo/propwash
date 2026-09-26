@@ -103,8 +103,12 @@ export const SENSORS = {
     noise: 0.25,
     lpfHz: 10,
   },
-  /** Attitude estimator (Mahony complementary filter): accelerometer trust (s⁻¹) and bias learning (s⁻²). */
-  attitude: { kp: 0.8, ki: 0.02, accTrustBandG: 0.25 },
+  /**
+   * Attitude estimator (Mahony complementary filter): accelerometer trust (s⁻¹) and bias learning
+   * (s⁻²). Disarmed, it trusts the accelerometer `disarmedKpScale`× more (Betaflight converges fast
+   * before arming) and snaps to it when they disagree by more than `snapDeg` (e.g. upside down).
+   */
+  attitude: { kp: 0.8, ki: 0.02, accTrustBandG: 0.25, disarmedKpScale: 10, snapDeg: 90 },
 };
 
 export const MODES = {

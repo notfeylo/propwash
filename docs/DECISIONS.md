@@ -238,3 +238,28 @@ With the sensor model on, the drone drifts ≈ 1.4 m in 30 s (limit 0.5 m) while
 ## 2026-09-25 · The bench floor stays visible in flight
 
 Phase 1's floor fades from 1.2 m to 6 m around the pad. From a few metres up the FPV camera then sees only the backdrop, with nothing to judge rotation against. Once the flight sim is running the fade moves to 5–7.9 m (the floor's edge is 8 m). The test field in group 3 replaces the bench set.
+
+## 2026-09-26 · The test field and its colliders
+
+- **Terrain:** a 600 m square heightfield on a 200 × 200 grid (3 m cells), three octaves of seeded value noise (9 / 3.5 / 0.8 m), flat inside 25 m of the pad and blending to the hills by 60 m. Physics, rendering and `Terrain.heightAt` share one grid and one triangle split (the (i, j)–(i+1, j+1) diagonal, as Rapier's heightfield uses), so the drawn surface and the collider agree to 0.00 mm over 200 random rays.
+- **Objects** are one list of primitives (`src/world/fieldLayout.ts`) that the physics turns into colliders and the renderer into instanced meshes: 841 poles on a 20 m grid, 6 gates (1.5 m openings) on an oval, the 40 m dive tower, 5 boxes, 2 ramps, 16 trees and 3 wind flags whose cloth follows the sim's wind.
+- **Drone colliders (§5)** are measured from `drone.glb` by `tools/gen-colliders.mjs` into `src/config/airframes/colliders.ts`: 24 hull support points of frame + stack + battery, the canister as a capsule, contact balls under the motors and four prop-disc sensors. Mass stays the airframe's explicit value (colliders have zero density).
+- **Prop strikes:** in this Rapier build, sensors report boxes, cylinders and balls but never the heightfield. Each prop disc's rim (12 points) is also tested against the ground height directly.
+- **Impacts:** the contact acceleration is what the body did minus what gravity and our own forces explain; it feeds crash detection (off by default, as in Betaflight; Settings → Flight) and, in group 4, the impact sounds.
+- The field replaces the bench floor while flight is on. `?flight=0` keeps the Phase 1 bench, and `pnpm verify:visual` now uses it, since those checks are about the rig.
+- The physical sky's HDR radiance is scaled (`FIELD_RENDER.sky.exposure` 0.22) so only the sun passes the bloom threshold; unscaled, bloom spread the sky over the whole frame as a milky haze. The far planes grow to 1.5 km and the shadowing key light follows the drone.
+
+## 2026-09-26 · Turtle mode (§3.7)
+
+- T (D-pad up) is the turtle switch; the OSD shows CRASH FLIP while it is on, like Betaflight. Arming with the switch on while upside down on the ground (the FC's tilt > 100°) arms into turtle; the small-angle check doesn't apply there.
+- The stick picks the side to lift: roll right spins the right-hand motors in reverse, pitch forward the front ones, so the quad rolls over the opposite edge. Motors reverse through zero with the same first-order dynamics; reverse thrust is 55% of forward at the same speed, and reaction torque and gyroscopics follow the sign.
+- Betaflight's `flip_over_after_crash_power_factor` (65%) and `crashflip_expo` (35%) shape the stick. Without the expo, full stick lifted two motors' worth of reverse thrust (9.6 N) against an 8.3 N quad and it hopped and tumbled; half stick did nothing. With it, 70–80% stick flips it in 0.6–1.1 s in every direction, and full stick can still hop it, as real turtle mode does.
+- Once upright on the ground (tilt < 35°), turtle ends by itself: the quad disarms, the switch turns off and a toast says to re-arm (Betaflight 4.5's `crashflip_auto_rearm` goes further and re-arms). Turtle is refused, and a normal arm happens instead, when the quad isn't upside down.
+
+## 2026-09-26 · Attitude estimate while disarmed
+
+The estimator started level and only nudged toward the accelerometer, so a quad sitting upside down never read as inverted: at 180° the accelerometer correction (a cross product) vanishes. Disarmed, it now trusts the accelerometer 10× more and snaps to it when they disagree by over 90°, as Betaflight converges quickly before arming. Arming seeds the accelerometer filter with gravity at the real attitude; it used to seed "level", which the fast estimator then believed. The debug teleport (`placeDrone`) restarts the FC's estimate too.
+
+## 2026-09-26 · T12 is flown by a scripted pilot
+
+The drone has no altitude hold, so the landing test "pilot" holds −1 m/s on the throttle (P on vertical speed) in Angle mode from 2 m, cuts the throttle on contact and disarms 0.3 s later. It touches down at 0.86 m/s, ground effect having taken a little of the speed in the last few centimetres.

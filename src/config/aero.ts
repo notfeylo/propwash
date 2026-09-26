@@ -40,3 +40,17 @@ export const PROP_WASH = {
   fadeHorizontalMs: 4,
   bandHz: [10, 40] as const,
 };
+
+/** Turtle mode (PRD §3.7): props run in reverse, far less efficient than forward. */
+export const TURTLE = {
+  /** Reverse thrust as a fraction of forward thrust at the same speed. */
+  reverseThrustFactor: 0.55,
+  /** Betaflight flip_over_after_crash_power_factor: full stick = this fraction of full command. */
+  powerFactor: 0.65,
+  /** Betaflight crashflip_expo: stick → power curve, so small inputs give gentle nudges. */
+  expo: 0.35,
+  /** Upright again (tilt below this, deg) while on the ground: turtle ends and the quad disarms. */
+  uprightDeg: 35,
+  /** Counts as upside down for turtle when tilted more than this (deg). */
+  invertedDeg: 100,
+};

@@ -22,6 +22,15 @@ export class Powertrain {
   /** Roll, pitch, yaw sticks (−1..1): the flight controller's input when a flight sim is attached. */
   sticks = { roll: 0, pitch: 0, yaw: 0 };
   /**
+   * Turtle mode (PRD §3.7): switched on, the next arm while upside down on the ground arms into
+   * turtle, where the sticks spin motors in reverse to flip the quad over. Once it is upright on
+   * the ground again it disarms by itself (set `turtleDone`) so the pilot can re-arm to fly.
+   */
+  turtleSwitch = false;
+  turtleActive = false;
+  /** Set for one update when turtle mode ended with the quad upright. */
+  turtleDone = false;
+  /**
    * Motor test (Betaflight Motors tab): while enabled and the drone is powered but disarmed, each
    * motor runs at its own 0..1 command (0 = stopped, not idle). Arming is blocked meanwhile.
    */
@@ -86,7 +95,15 @@ export class Powertrain {
   /** Refused (false) while the motor test is on, like Betaflight while its Motors tab is open. */
   arm(): boolean {
     if (this.motorTest.enabled) return false;
-    return this.power.arm(this.powerInputs);
+    // Turtle: upside down is the point, so the small-angle check doesn't apply.
+    const turtle = this.turtleSwitch && !!this.flight?.turtleReady;
+    const ok = this.power.arm(turtle ? { throttle: this.throttle } : this.powerInputs);
+    if (ok) this.turtleActive = turtle;
+    return ok;
+  }
+
+  toggleTurtle(): void {
+    this.turtleSwitch = !this.turtleSwitch;
   }
 
   disarm(): void {
@@ -121,13 +138,23 @@ export class Powertrain {
       // Armed: the sticks go through the flight controller. Disarmed: the motor test, if on.
       const armed = this.power.armed;
       const sticks: Sticks = { throttle: this.throttle, ...this.sticks };
+      if (!armed) this.turtleActive = false;
       this.flight.inputs = {
         driven: armed || this.testing,
         cmd: this.motorTest.values,
         sticks: armed ? sticks : undefined,
         stopAtZero: !armed,
+        turtle: armed && this.turtleActive,
       };
       this.flight.advance(dt);
+      this.turtleDone = false;
+      if (this.turtleActive && this.flight.uprightOnGround) {
+        this.turtleActive = false;
+        this.turtleSwitch = false;
+        this.turtleDone = true;
+        this.power.disarm('switch');
+      }
+      if (this.power.armed && this.flight.takeCrash()) this.power.disarm('kill');
       return events;
     }
     const v = this.battery.connected ? this.battery.voltage : 0;

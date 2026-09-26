@@ -1,4 +1,5 @@
-import type { Airframe } from '../../config/airframes';
+import { TURTLE } from '../../config/aero';
+import { type Airframe, ROTORS } from '../../config/airframes';
 import {
   type AxisGains,
   type FlightMode,
@@ -153,7 +154,7 @@ export class FlightController {
     this.saturated = false;
     this.airmodeActive = false;
     this.gyro.reset();
-    this.acc.reset();
+    this.acc.reset(q);
     this.estimator.reset(q);
     for (const k of Object.keys(this.stickF) as (keyof Sticks)[]) this.stickF[k].reset(sticks?.[k] ?? 0);
     for (const a of AXES) {
@@ -169,15 +170,28 @@ export class FlightController {
   }
 
   /** Keep the sensors and attitude estimate running while disarmed (arming checks read them). */
-  sense(t: FcTruth): { gyroBody: V3; q: Quat } {
+  sense(t: FcTruth, armed = true): { gyroBody: V3; q: Quat } {
     if (this.idealSensors) {
       this.estimator.reset(t.quaternion);
       return { gyroBody: t.angularVelocityBody, q: t.quaternion };
     }
     const gyroBody = this.gyro.sample(t.angularVelocityBody, t.motors);
     const acc = this.acc.sample(t.accelWorld, t.quaternion, t.gravity);
-    const q = this.estimator.update(gyroBody, acc, t.gravity, this.dt);
+    const q = this.estimator.update(gyroBody, acc, t.gravity, this.dt, armed);
     return { gyroBody, q };
+  }
+
+  /**
+   * Turtle mode (flip over after crash, PRD §3.7): upside down on the ground, the stick picks the
+   * side to lift and those motors spin in reverse (negative commands). Roll right lifts the right
+   * motors, pitch forward the front ones, so the quad rolls over the opposite edge.
+   */
+  turtle(sticks: Sticks): number[] {
+    return ROTORS.map((r) => {
+      const side = clamp(Math.sign(r.position[0]) * sticks.roll + -Math.sign(r.position[2]) * sticks.pitch, 0, 1);
+      const shaped = side * (1 - TURTLE.expo) + side ** 3 * TURTLE.expo;
+      return -shaped * TURTLE.powerFactor;
+    });
   }
 
   /** One control loop: returns the four motor commands (0..1). */
