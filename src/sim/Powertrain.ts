@@ -116,7 +116,7 @@ export class Powertrain {
   toggleAutoland(): boolean {
     if (!this.flight || !this.power.armed || this.turtleActive) return (this.autoland = false);
     this.autoland = !this.autoland;
-    if (this.autoland) this.flight.autoland.reset(this.flight.airframe.reference.hoverCmd);
+    if (this.autoland) this.flight.startAutoland(this.flight.airframe.reference.hoverCmd);
     return this.autoland;
   }
 
@@ -136,10 +136,14 @@ export class Powertrain {
     const events = this.power.update(dt, this.powerInputs);
     for (const e of events) {
       if (e.type === 'plugged') {
-        this.battery.connected = true;
-        this.battery.voltage = this.battery.restingVoltage();
+        if (this.flight) this.flight.setBattery(true, true);
+        else {
+          this.battery.connected = true;
+          this.battery.voltage = this.battery.restingVoltage();
+        }
       } else if (e.type === 'unplugged') {
-        this.battery.connected = false;
+        if (this.flight) this.flight.setBattery(false);
+        else this.battery.connected = false;
         this.motors.setDrive('coast');
       } else if (e.type === 'armed') {
         if (this.flight) this.flight.arm();

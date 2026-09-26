@@ -7,6 +7,7 @@ import { DRONE_COLLIDERS, IMPACT, PAD_COLLIDER, PHYSICS } from '../../config/phy
 import type { FieldLayout } from '../../world/fieldLayout';
 import type { Terrain } from '../../world/terrain';
 import { Autoland } from '../fc/autoland';
+import type { FlightMode, AxisGains, RateParams, RatesModel } from '../../config/fc';
 import { FlightController, type Sticks } from '../fc/FlightController';
 import { BODY, type FlightAxes, flightToBody } from '../frames';
 import { Rng } from '../rng';
@@ -30,6 +31,7 @@ import { angularDamping, bodyDrag, Wind } from './Aero';
 import { FlightBattery } from './FlightBattery';
 import { FlightMotors, thrust } from './FlightMotors';
 import { PropWash } from './PropWash';
+import { capture, type Plain, restore } from './checkpoint';
 
 export type Rapier = typeof RAPIER_NS;
 
@@ -47,7 +49,55 @@ export interface FlightInputs {
   turtle?: boolean;
   /** Land mode: the autopilot flies home and lands; the sticks are ignored. */
   autoland?: boolean;
+  /** Rate setpoint (deg/s) that replaces the sticks' (blackbox import, §8.3). */
+  setpoint?: FlightAxes;
 }
+
+/** Flight controller settings that change how it flies (logged for replays). */
+export interface FcConfig {
+  mode: FlightMode;
+  idealSensors: boolean;
+  ratesModel: RatesModel;
+  rates: Record<'roll' | 'pitch' | 'yaw', RateParams>;
+  gains: Record<'roll' | 'pitch' | 'yaw', AxisGains>;
+}
+
+/**
+ * Everything that changes the sim from outside, stamped with the step it happened before. With
+ * a checkpoint, replaying these reproduces a flight exactly (Phase 2 PRD §8.2).
+ */
+export type FlightOp =
+  | { step: number; op: 'inputs'; inputs: FlightInputs }
+  | { step: number; op: 'arm'; soft?: boolean; inputs: FlightInputs }
+  | { step: number; op: 'reset'; position: V3; yaw: number }
+  | { step: number; op: 'airframe'; airframe: Airframe }
+  | { step: number; op: 'fc'; config: FcConfig }
+  | { step: number; op: 'autoland'; hover: number }
+  | { step: number; op: 'battery'; connected: boolean; rest: boolean };
+
+/** The whole sim at one step: Rapier's snapshot plus our own state. */
+export interface FlightCheckpoint {
+  step: number;
+  seed: number;
+  airframe: Airframe;
+  world: Uint8Array;
+  handles: { body: number; colliders: number[]; sensors: number[] };
+  sim: { [k: string]: Plain };
+}
+
+/** Fields `capture` must not walk: Rapier objects, wiring, and the log itself. */
+const NOT_STATE = new Set([
+  'world',
+  'body',
+  'colliders',
+  'propSensors',
+  'field',
+  'log',
+  'loggedInputs',
+  'onStep',
+  'beforeArm',
+  'maxStepsPerFrame',
+]);
 
 /** Everything render, audio and the tests read. Plain data: safe to copy to a worker later. */
 export interface FlightState {
@@ -104,8 +154,8 @@ const toV3 = (v: { x: number; y: number; z: number }): V3 => v3(v.x, v.y, v.z);
  * Group 1 has no flight controller: `inputs.cmd` drives the motors open loop.
  */
 export class FlightSim {
-  readonly world: RAPIER_NS.World;
-  readonly body: RAPIER_NS.RigidBody;
+  world: RAPIER_NS.World;
+  body: RAPIER_NS.RigidBody;
   readonly motors: FlightMotors;
   readonly battery: FlightBattery;
   readonly wind: Wind;
@@ -129,6 +179,13 @@ export class FlightSim {
   droppedSteps = 0;
   /** Per-frame step cap; offline stepping (screenshots, recordings) lifts it. */
   maxStepsPerFrame = PHYSICS.maxStepsPerFrame;
+  /** While set, every outside change is appended here (a flight recording, §8.2). */
+  log: FlightOp[] | null = null;
+  private loggedInputs: FlightInputs | null = null;
+  /** Called after every step (the blackbox samples here). */
+  onStep: ((s: FlightSim) => void) | null = null;
+  /** Called just before arming changes anything (a recording takes its checkpoint here). */
+  beforeArm: (() => void) | null = null;
   private colliders: RAPIER_NS.Collider[] = [];
   private propSensors: RAPIER_NS.Collider[] = [];
   /** World-frame force applied last step (N), to separate contact forces from ours. */
@@ -191,6 +248,15 @@ export class FlightSim {
     if (!f) return this.groundY;
     if (Math.hypot(x, z) <= PAD_COLLIDER.radiusM) return f.padTopY;
     return f.terrain.heightAt(x, z);
+  }
+
+  /**
+   * Free distance from `origin` along the unit `dir` before any collider other than the drone's
+   * own (m, at most `maxM`): the chase camera's no-clip.
+   */
+  castRay(origin: V3, dir: V3, maxM: number): number {
+    const hit = this.world.castRay(new this.R.Ray(origin, dir), maxM, true, undefined, undefined, undefined, this.body);
+    return hit ? hit.timeOfImpact : maxM;
   }
 
   /** Model-frame y of the lowest collider point when level (what rests on the ground). */
@@ -285,6 +351,7 @@ export class FlightSim {
   /** Switch preset (payload toggle): mass, CoM, inertia, pack spec and collider. */
   setAirframe(a: Airframe): void {
     if (a.id === this.airframe.id) return;
+    this.log?.push({ step: this.stepIndex, op: 'airframe', airframe: a });
     // Resting on the ground: raise or lower the body so the new collider bottom sits on it.
     if (len(toV3(this.body.linvel())) < 0.05) {
       const t = this.body.translation();
@@ -328,6 +395,10 @@ export class FlightSim {
     const body = this.body;
     const inp = this.inputs;
     const ms = this.motors.motors;
+    if (this.log && inp !== this.loggedInputs) {
+      this.loggedInputs = inp;
+      this.log.push({ step: this.stepIndex, op: 'inputs', inputs: copyInputs(inp) });
+    }
 
     // Flight controller: sensors sample the body as it is now, then the loop sets the motors.
     const q0 = toQuat(body.rotation());
@@ -354,7 +425,7 @@ export class FlightSim {
         PHYSICS.gravity,
       );
       cmd = this.fc.update(truth, auto, 'angle');
-    } else if (inp.sticks && inp.driven) cmd = this.fc.update(truth, inp.sticks);
+    } else if (inp.sticks && inp.driven) cmd = this.fc.update(truth, inp.sticks, undefined, inp.setpoint);
     else this.fc.sense(truth, false);
 
     this.motors.drive = inp.driven && this.battery.connected ? 'driven' : 'coast';
@@ -417,6 +488,7 @@ export class FlightSim {
     this.stepIndex++;
     this.prev = this.state;
     this.state = this.snapshot(thrusts);
+    this.onStep?.(this);
   }
 
   private snapshot(thrusts: number[] = [0, 0, 0, 0]): FlightState {
@@ -525,6 +597,7 @@ export class FlightSim {
 
   /** Put the drone back at rest (launch pad reset); motors and pack keep their state. */
   reset(position: V3 = this.restingAt(), yaw = 0): void {
+    this.log?.push({ step: this.stepIndex, op: 'reset', position, yaw });
     this.body.setTranslation(position, true);
     this.body.setRotation(yawQuat(yaw), true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -537,9 +610,100 @@ export class FlightSim {
 
   /** Arming ramp (idle stagger) with this sim's seeded randomness. */
   arm(soft?: boolean): void {
+    this.beforeArm?.();
+    // The FC seeds its stick filters from the inputs of the moment: log them with the arm.
+    this.log?.push({ step: this.stepIndex, op: 'arm', soft, inputs: copyInputs(this.inputs) });
     this.home = toV3(this.body.translation());
     this.motors.arm(this.motorRng, soft);
     this.fc.reset(toQuat(this.body.rotation()), this.inputs.sticks);
+  }
+
+  /** Flight controller settings (mode, rates, PIDs, sensors): applied and logged. */
+  configureFc(c: FcConfig): void {
+    this.log?.push({ step: this.stepIndex, op: 'fc', config: structuredClone(c) });
+    const fc = this.fc;
+    fc.mode = c.mode;
+    fc.idealSensors = c.idealSensors;
+    fc.ratesModel = c.ratesModel;
+    fc.rates = structuredClone(c.rates);
+    fc.gains = structuredClone(c.gains);
+  }
+
+  /** Battery plugged / unplugged; `rest` sets the terminal voltage to the resting value. */
+  setBattery(connected: boolean, rest = false): void {
+    this.log?.push({ step: this.stepIndex, op: 'battery', connected, rest });
+    this.battery.connected = connected;
+    if (rest) this.battery.voltage = this.battery.restingVoltage();
+  }
+
+  /** Land mode engaged: the autopilot starts over from the climb. */
+  startAutoland(hover: number): void {
+    this.log?.push({ step: this.stepIndex, op: 'autoland', hover });
+    this.autoland.reset(hover);
+  }
+
+  /** Replay one logged change. */
+  applyOp(o: FlightOp): void {
+    switch (o.op) {
+      case 'inputs':
+        this.inputs = copyInputs(o.inputs);
+        break;
+      case 'arm':
+        this.inputs = copyInputs(o.inputs);
+        this.arm(o.soft);
+        break;
+      case 'reset':
+        this.reset(o.position, o.yaw);
+        break;
+      case 'airframe':
+        this.setAirframe(o.airframe);
+        break;
+      case 'fc':
+        this.configureFc(o.config);
+        break;
+      case 'autoland':
+        this.startAutoland(o.hover);
+        break;
+      case 'battery':
+        this.setBattery(o.connected, o.rest);
+        break;
+    }
+  }
+
+  get stepCount(): number {
+    return this.stepIndex;
+  }
+
+  /** The whole sim now: Rapier's world snapshot plus our state (a replay starts from this). */
+  checkpoint(): FlightCheckpoint {
+    return {
+      step: this.stepIndex,
+      seed: this.rng.seed,
+      airframe: this.airframe,
+      world: this.world.takeSnapshot(),
+      handles: {
+        body: this.body.handle,
+        colliders: this.colliders.map((c) => c.handle),
+        sensors: this.propSensors.map((c) => c.handle),
+      },
+      sim: capture(this, NOT_STATE),
+    };
+  }
+
+  /** Become the sim a checkpoint was taken from (built with the same options: field, wind). */
+  restoreCheckpoint(cp: FlightCheckpoint): void {
+    this.world.free();
+    const w = this.R.World.restoreSnapshot(cp.world);
+    if (!w) throw new Error('Rapier snapshot did not restore');
+    this.world = w;
+    this.world.timestep = this.h;
+    this.body = w.getRigidBody(cp.handles.body);
+    this.colliders = cp.handles.colliders.map((h) => w.getCollider(h));
+    this.propSensors = cp.handles.sensors.map((h) => w.getCollider(h));
+    this.airframe = cp.airframe;
+    this.fc.setAirframe(cp.airframe);
+    restore(this as unknown as Record<string, unknown>, cp.sim);
+    this.loggedInputs = null;
   }
 
   /** Tilt the flight controller believes (deg): the arming small-angle check. */
@@ -550,6 +714,16 @@ export class FlightSim {
   dispose(): void {
     this.world.free();
   }
+}
+
+/** A logged copy of the inputs (the live object and its arrays are reused by the caller). */
+function copyInputs(i: FlightInputs): FlightInputs {
+  return {
+    ...i,
+    cmd: [...i.cmd],
+    sticks: i.sticks && { ...i.sticks },
+    setpoint: i.setpoint && { ...i.setpoint },
+  };
 }
 
 function toQuat(r: { x: number; y: number; z: number; w: number }): Quat {
