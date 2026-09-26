@@ -124,3 +124,34 @@ export const ARMING_FC = {
   /** Crash detection (off by default, as in Betaflight): disarm above this impact (g). */
   crashDetection: { enabled: false, impactG: 12 },
 };
+
+/**
+ * Land mode: return to where the drone armed and land there (a GPS-rescue-style autopilot flying
+ * the Angle-mode controller with virtual sticks). Uses the sim's true position for now; the GPS
+ * model comes with Phase 4.
+ */
+export const AUTOLAND = {
+  /** Cruise height above home or the ground below, whichever is higher (m). */
+  cruiseAltM: 6,
+  cruiseSpeedMs: 7,
+  maxTiltDeg: 28,
+  /** Start descending within this horizontal distance of home, below this speed. */
+  arriveRadiusM: 0.35,
+  arriveSpeedMs: 0.4,
+  /** Descent: fast, then slow for the last metres above the ground. */
+  descentFastMs: 2,
+  descentSlowMs: 0.5,
+  slowBelowM: 2.5,
+  /** Horizontal: position → velocity → acceleration gains (s⁻¹). */
+  posGain: 1.1,
+  velGain: 1.6,
+  /** Vertical: throttle per m/s of climb-rate error, and the hover-estimate learning rate. */
+  vzGain: 0.08,
+  hoverLearn: 0.04,
+  /** Turn to face home while returning (FPV sees where it goes); yaw stick per rad of error. */
+  yawGain: 0.8,
+  /** Disarm this long after touchdown (s). */
+  disarmAfterS: 0.4,
+  /** Any roll, pitch or yaw stick past this cancels it (the pilot takes over). */
+  overrideStick: 0.4,
+};

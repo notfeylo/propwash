@@ -27,6 +27,7 @@ export const KEYBOARD = {
     reset: ['KeyR'],
     modeCycle: ['KeyQ'],
     turtleToggle: ['KeyT'],
+    landToggle: ['KeyG'],
     yawLeft: ['KeyA'],
     yawRight: ['KeyD'],
     pitchForward: ['ArrowUp'],
@@ -90,6 +91,7 @@ export const GAMEPAD = {
     reset: PAD.down,
     modeCycle: PAD.l2,
     turtleToggle: PAD.up,
+    landToggle: PAD.cross,
   },
   /** The same action from a second pad within this window is a duplicate (DS4Windows, Steam Input). */
   duplicateWindowS: 0.25,

@@ -195,7 +195,8 @@ export class FlightController {
   }
 
   /** One control loop: returns the four motor commands (0..1). */
-  update(t: FcTruth, raw: Sticks): number[] {
+  /** @param modeOverride fly this mode for this loop (land mode flies Angle) */
+  update(t: FcTruth, raw: Sticks, modeOverride?: FlightMode): number[] {
     const dt = this.dt;
     const { gyroBody, q } = this.sense(t);
     const gyro = bodyToFlight(gyroBody);
@@ -215,11 +216,12 @@ export class FlightController {
       yaw: rate(this.ratesModel, s.yaw, this.rates.yaw) * DEG,
     };
     const sp: FlightAxes = { ...acro };
-    if (this.mode !== 'acro') {
+    const mode = modeOverride ?? this.mode;
+    if (mode !== 'acro') {
       const A = MODES.angle;
       const level = (stick: number, angle: number) => A.kLevel * (stick * A.maxAngleDeg * DEG - angle);
       const angleSp = { roll: level(s.roll, att.roll), pitch: level(s.pitch, att.pitch) };
-      if (this.mode === 'angle') {
+      if (mode === 'angle') {
         sp.roll = angleSp.roll;
         sp.pitch = angleSp.pitch;
       } else {

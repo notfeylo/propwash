@@ -36,9 +36,19 @@ export const WIND = {
 export const PROP_WASH = {
   /** Onset: v_in < −onset · v_induced. */
   onsetInducedFraction: 0.6,
+  /** Severity reaches 1 this much further into the wake (× v_induced). */
+  fullInducedFraction: 0.8,
   /** Severity fades out as horizontal airspeed passes this (m/s). */
   fadeHorizontalMs: 4,
+  /** Band of the random thrust fluctuations (Hz). */
   bandHz: [10, 40] as const,
+  /** At full severity: mean thrust lost, and the fluctuation's RMS (fractions of thrust). */
+  thrustLoss: 0.15,
+  fluctuation: 0.8,
+  /** Severity smoothing (Hz): the wake builds and clears over tens of milliseconds. */
+  severityLpfHz: 8,
+  /** Floor for the induced-velocity estimate at very low thrust (N). */
+  minThrustN: 0.2,
 };
 
 /** Turtle mode (PRD §3.7): props run in reverse, far less efficient than forward. */

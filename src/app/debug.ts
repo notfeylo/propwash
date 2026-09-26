@@ -133,6 +133,8 @@ export interface DebugHandle {
   placeDrone(x: number, z: number, altitude?: number, rollDeg?: number): void;
   /** Turtle mode switch. */
   setTurtle(on: boolean): void;
+  /** Land mode (armed): returns whether it is on. */
+  toggleLand(): boolean;
   /** Last flight-controller loop: setpoint and gyro (deg/s), PID terms, motor commands. */
   fc(): unknown;
   settings(): unknown;
@@ -310,6 +312,7 @@ export function exposeDebug(app: App): void {
       f.fc.reset(q, f.inputs.sticks);
     },
     setTurtle: (on) => (app.powertrain.turtleSwitch = on),
+    toggleLand: () => app.powertrain.toggleAutoland(),
     settings: () => JSON.parse(JSON.stringify(app.settings)),
     setUiHidden: (h) => app.setUiHidden(h),
     setCamera: (mode, instant) => app.cameras.setMode(mode, instant),

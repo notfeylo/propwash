@@ -1,4 +1,5 @@
 import { Battery, type PackState } from './Battery';
+import { AUTOLAND } from '../config/fc';
 import type { Sticks } from './fc/FlightController';
 import type { FlightSim } from './flight/FlightSim';
 import { MotorModel, targetRpm } from './MotorModel';
@@ -30,6 +31,11 @@ export class Powertrain {
   turtleActive = false;
   /** Set for one update when turtle mode ended with the quad upright. */
   turtleDone = false;
+  /** Land mode: the autopilot is flying home to land. */
+  autoland = false;
+  /** Set for one update when land mode touched down and disarmed; or cancelled by the sticks. */
+  autolandDone = false;
+  autolandCancelled = false;
   /**
    * Motor test (Betaflight Motors tab): while enabled and the drone is powered but disarmed, each
    * motor runs at its own 0..1 command (0 = stopped, not idle). Arming is blocked meanwhile.
@@ -106,6 +112,14 @@ export class Powertrain {
     this.turtleSwitch = !this.turtleSwitch;
   }
 
+  /** Start or stop land mode (only armed, in flight). Returns whether it is now on. */
+  toggleAutoland(): boolean {
+    if (!this.flight || !this.power.armed || this.turtleActive) return (this.autoland = false);
+    this.autoland = !this.autoland;
+    if (this.autoland) this.flight.autoland.reset(this.flight.airframe.reference.hoverCmd);
+    return this.autoland;
+  }
+
   disarm(): void {
     this.power.disarm('switch');
   }
@@ -139,12 +153,21 @@ export class Powertrain {
       const armed = this.power.armed;
       const sticks: Sticks = { throttle: this.throttle, ...this.sticks };
       if (!armed) this.turtleActive = false;
+      if (!armed) this.autoland = false;
+      // The pilot takes over by moving the sticks.
+      this.autolandCancelled = false;
+      const over = Math.max(Math.abs(this.sticks.roll), Math.abs(this.sticks.pitch), Math.abs(this.sticks.yaw));
+      if (this.autoland && over > AUTOLAND.overrideStick) {
+        this.autoland = false;
+        this.autolandCancelled = true;
+      }
       this.flight.inputs = {
         driven: armed || this.testing,
         cmd: this.motorTest.values,
         sticks: armed ? sticks : undefined,
         stopAtZero: !armed,
         turtle: armed && this.turtleActive,
+        autoland: armed && this.autoland,
       };
       this.flight.advance(dt);
       this.turtleDone = false;
@@ -155,6 +178,12 @@ export class Powertrain {
         this.power.disarm('switch');
       }
       if (this.power.armed && this.flight.takeCrash()) this.power.disarm('kill');
+      this.autolandDone = false;
+      if (this.autoland && this.flight.autoland.phase === 'landed') {
+        this.autoland = false;
+        this.autolandDone = true;
+        this.power.disarm('switch');
+      }
       return events;
     }
     const v = this.battery.connected ? this.battery.voltage : 0;

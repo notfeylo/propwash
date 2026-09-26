@@ -204,3 +204,47 @@ describe('prop strikes and impacts', () => {
     s.dispose();
   });
 });
+
+describe('land mode (return to home and land)', () => {
+  function landHome(wind: 'calm' | 'light') {
+    const s = new FlightSim({ rapier: RAPIER, airframe: freestyle7, wind, field: { terrain, layout, padTopY: PAD_TOP } });
+    s.battery.connected = true;
+    const home = { ...s.state.position };
+    s.inputs = { driven: true, cmd: [0, 0, 0, 0], sticks: { throttle: 0.3, roll: 0, pitch: 0, yaw: 0 } };
+    s.arm();
+    // Out in the field: 39 m away, 12 m up, facing away from home.
+    const q = quatFromAxisAngle(v3(0, 1, 0), 2.2);
+    s.body.setTranslation({ x: 30, y: 12, z: -25 }, true);
+    s.body.setRotation(q, true);
+    s.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    s.fc.reset(q);
+    s.autoland.reset(freestyle7.reference.hoverCmd);
+    s.inputs = { driven: true, cmd: [0, 0, 0, 0], sticks: { throttle: 0.5, roll: 0, pitch: 0, yaw: 0 }, autoland: true };
+    let maxTilt = 0;
+    let maxY = 0;
+    const t0 = s.state.time;
+    while (s.autoland.phase !== 'landed' && s.state.time - t0 < 60) {
+      s.stepOnce();
+      maxTilt = Math.max(maxTilt, tiltDeg(s));
+      maxY = Math.max(maxY, s.state.position.y);
+    }
+    const took = s.state.time - t0;
+    s.inputs = { driven: false, cmd: [0, 0, 0, 0] };
+    run(s, 1);
+    const off = Math.hypot(s.state.position.x - home.x, s.state.position.z - home.z);
+    const r = { took, off, tilt: tiltDeg(s), maxTilt, maxY, landed: s.autoland.phase === 'landed', onGround: s.state.onGround };
+    s.dispose();
+    return r;
+  }
+  for (const wind of ['calm', 'light'] as const)
+    it(`flies home from 39 m away and lands on the pad (${wind} wind)`, () => {
+      const r = landHome(wind);
+      log(
+        `Land mode (${wind}): from 39 m out and 12 m up, home in ${r.took.toFixed(1)} s · landed ${r.off.toFixed(2)} m from where it armed, tilt ${r.tilt.toFixed(1)}° · max tilt en route ${r.maxTilt.toFixed(0)}°, max height ${r.maxY.toFixed(1)} m`,
+      );
+      expect(r.landed).toBe(true);
+      expect(r.onGround).toBe(true);
+      expect(r.off).toBeLessThan(wind === 'calm' ? 0.3 : 0.5);
+      expect(r.tilt).toBeLessThan(5);
+    });
+});

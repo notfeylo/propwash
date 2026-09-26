@@ -24,23 +24,24 @@ Click the page (or press any key) to start audio; browsers block sound until you
 
 Keyboard, PS4 / PS5 controllers (Chrome's standard mapping) and USB RC radios all work, and you can switch between them at any time: throttle and sticks follow whichever device you touched last.
 
-| Action                    | Keyboard                         | Gamepad (PS4 / PS5)                    |
-| ------------------------- | -------------------------------- | -------------------------------------- |
-| Plug / unplug battery     | P                                | Options (hold)                         |
-| Arm / disarm              | Space                            | R1                                     |
-| Kill                      | X                                | L1 + R1                                |
-| Throttle                  | W / S (Shift = faster), 0 = zero | Left stick (Mode 2), or R2 in Settings |
-| Yaw / pitch / roll        | A / D, arrow keys (not for acro) | Left stick X, right stick              |
-| Flight mode               | Q (Acro / Angle / Horizon)       | L2                                     |
-| Reset to launch pad       | R                                | D-pad down                             |
-| Turtle mode (after crash) | T, then arm while upside down    | D-pad up                               |
-| Cycle camera / feed style | C / V                            | Triangle / Square                      |
-| Beacon                    | B                                | Circle                                 |
-| Motor test panel          | M                                | Touchpad                               |
-| Payload toggle            | L                                | Share / Create                         |
-| Settings                  | O                                | —                                      |
-| Hide UI / fullscreen      | H / F                            | —                                      |
-| Orbit, zoom, pan          | Mouse drag, wheel, right-drag    | —                                      |
+| Action                     | Keyboard                         | Gamepad (PS4 / PS5)                    |
+| -------------------------- | -------------------------------- | -------------------------------------- |
+| Plug / unplug battery      | P                                | Options (hold)                         |
+| Arm / disarm               | Space                            | R1                                     |
+| Kill                       | X                                | L1 + R1                                |
+| Throttle                   | W / S (Shift = faster), 0 = zero | Left stick (Mode 2), or R2 in Settings |
+| Yaw / pitch / roll         | A / D, arrow keys (not for acro) | Left stick X, right stick              |
+| Flight mode                | Q (Acro / Angle / Horizon)       | L2                                     |
+| Reset to launch pad        | R                                | D-pad down                             |
+| Turtle mode (after crash)  | T, then arm while upside down    | D-pad up                               |
+| Land mode (fly home, land) | G                                | Cross (✕)                              |
+| Cycle camera / feed style  | C / V                            | Triangle / Square                      |
+| Beacon                     | B                                | Circle                                 |
+| Motor test panel           | M                                | Touchpad                               |
+| Payload toggle             | L                                | Share / Create                         |
+| Settings                   | O                                | —                                      |
+| Hide UI / fullscreen       | H / F                            | —                                      |
+| Orbit, zoom, pan           | Mouse drag, wheel, right-drag    | —                                      |
 
 USB RC radios (EdgeTX / OpenTX in joystick mode) show up as non-standard gamepads. Press **Calibrate radio** in the input widget (bottom right) and the wizard detects each stick's axis, endpoints and direction, plus your arm switch. The calibration is saved in the browser. Controllers rumble in Chrome: the weak motor follows motor load, and the ESC tones and arming give short pulses.
 

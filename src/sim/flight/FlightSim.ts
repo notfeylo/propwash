@@ -6,6 +6,7 @@ import { ARMING_FC } from '../../config/fc';
 import { DRONE_COLLIDERS, IMPACT, PAD_COLLIDER, PHYSICS } from '../../config/physics';
 import type { FieldLayout } from '../../world/fieldLayout';
 import type { Terrain } from '../../world/terrain';
+import { Autoland } from '../fc/autoland';
 import { FlightController, type Sticks } from '../fc/FlightController';
 import { BODY, type FlightAxes, flightToBody } from '../frames';
 import { Rng } from '../rng';
@@ -28,6 +29,7 @@ import {
 import { angularDamping, bodyDrag, Wind } from './Aero';
 import { FlightBattery } from './FlightBattery';
 import { FlightMotors, thrust } from './FlightMotors';
+import { PropWash } from './PropWash';
 
 export type Rapier = typeof RAPIER_NS;
 
@@ -43,6 +45,8 @@ export interface FlightInputs {
   stopAtZero?: boolean;
   /** Turtle mode (flip over after crash): the sticks spin motors in reverse. */
   turtle?: boolean;
+  /** Land mode: the autopilot flies home and lands; the sticks are ignored. */
+  autoland?: boolean;
 }
 
 /** Everything render, audio and the tests read. Plain data: safe to copy to a worker later. */
@@ -69,6 +73,10 @@ export interface FlightState {
   propStrike: boolean[];
   /** Contact acceleration this step (g): what the ground or an object did to the drone. */
   impactG: number;
+  /** Prop wash severity, worst rotor (0..1). */
+  propWash: number;
+  /** Airspeed (m/s). */
+  airspeed: number;
 }
 
 export interface FlightSimOptions {
@@ -102,6 +110,10 @@ export class FlightSim {
   readonly battery: FlightBattery;
   readonly wind: Wind;
   readonly fc: FlightController;
+  readonly propWash: PropWash;
+  readonly autoland: Autoland;
+  /** Where the drone armed: land mode returns here (world, model origin). */
+  home: V3 = v3();
   readonly rng: Rng;
   /** Test hook: an external torque (N·m, flight axes) applied every step while set. */
   disturbance: FlightAxes | null = null;
@@ -121,8 +133,10 @@ export class FlightSim {
   private propSensors: RAPIER_NS.Collider[] = [];
   /** World-frame force applied last step (N), to separate contact forces from ours. */
   private lastForce = v3();
-  /** Latched impacts since the owner last read them (crash detection, sounds). */
-  impacts: { g: number; time: number }[] = [];
+  /** Impacts not yet drained by the owner (sounds); crash detection reads them without draining. */
+  impacts: { g: number; time: number; surface: 'grass' | 'hard' }[] = [];
+  private crashCheckedTo = 0;
+  private terrainHandle = -1;
   private readonly field: FlightSimOptions['field'];
   private acc = 0;
   private stepIndex = 0;
@@ -141,6 +155,8 @@ export class FlightSim {
     this.battery = new FlightBattery(o.airframe.pack);
     this.wind = new Wind(this.rng.fork('wind'), o.wind);
     this.fc = new FlightController(o.airframe, this.rng.fork('fc'), this.h);
+    this.propWash = new PropWash(this.rng.fork('propwash'), this.h);
+    this.autoland = new Autoland(o.airframe.reference.hoverCmd, (x, z) => this.groundAt(x, z));
 
     this.world = new R.World({ x: 0, y: -PHYSICS.gravity, z: 0 });
     this.world.timestep = this.h;
@@ -194,9 +210,9 @@ export class FlightSim {
     for (let ix = 0; ix < n; ix++) for (let iz = 0; iz < n; iz++) hs[ix * n + iz] = terrain.heights[iz * n + ix];
     const mat = (d: RAPIER_NS.ColliderDesc) =>
       d.setFriction(PHYSICS.contact.friction).setRestitution(PHYSICS.contact.restitution);
-    this.world.createCollider(
+    this.terrainHandle = this.world.createCollider(
       mat(R.ColliderDesc.heightfield(terrain.cells, terrain.cells, hs, { x: terrain.size, y: 1, z: terrain.size })),
-    );
+    ).handle;
     const t = PAD_COLLIDER.thicknessM;
     this.world.createCollider(
       mat(R.ColliderDesc.cylinder(t / 2, PAD_COLLIDER.radiusM).setTranslation(0, f.padTopY - t / 2, 0)),
@@ -329,6 +345,15 @@ export class FlightSim {
       this.fc.sense(truth, false);
       cmd = this.fc.turtle(inp.sticks);
       stopAtZero = true;
+    } else if (inp.sticks && inp.driven && inp.autoland) {
+      const s = this.state;
+      const auto = this.autoland.update(
+        this.h,
+        { position: s.position, velocity: s.velocity, quaternion: q0, onGround: s.onGround },
+        this.home,
+        PHYSICS.gravity,
+      );
+      cmd = this.fc.update(truth, auto, 'angle');
     } else if (inp.sticks && inp.driven) cmd = this.fc.update(truth, inp.sticks);
     else this.fc.sense(truth, false);
 
@@ -362,7 +387,8 @@ export class FlightSim {
       const vAir = sub(vPoint, windV);
       const vIn = dot(vAir, up);
       const vPerp = sub(vAir, scale(up, vIn));
-      const t = thrust(s.omega, vIn, pw.y - this.groundAt(pw.x, pw.z));
+      const t0 = thrust(s.omega, vIn, pw.y - this.groundAt(pw.x, pw.z));
+      const t = t0 * this.propWash.multiplier(i, vIn, t0, len(vPerp));
       thrusts.push(t);
       const f = add(scale(up, t), scale(vPerp, -m.kD * Math.abs(s.omega)));
       force = add(force, f);
@@ -403,11 +429,13 @@ export class FlightSim {
     const own = add(scale(this.lastForce, 1 / this.airframe.massKg), v3(0, -PHYSICS.gravity, 0));
     const impactG = len(sub(accel, own)) / PHYSICS.gravity;
     let onGround = false;
+    let surface: 'grass' | 'hard' = 'hard';
     for (const c of this.colliders)
       this.world.contactPairsWith(c, (other) => {
-        if (onGround) return;
         this.world.contactPair(c, other, (manifold) => {
-          if (manifold.numContacts() > 0) onGround = true;
+          if (manifold.numContacts() === 0) return;
+          onGround = true;
+          if (other.handle === this.terrainHandle) surface = 'grass';
         });
       });
     // Sensors catch objects; Rapier sensors don't report heightfields, so each prop disc's rim is
@@ -430,7 +458,7 @@ export class FlightSim {
       return false;
     });
     if (onGround && impactG > IMPACT.minG && this.stepIndex > 0)
-      this.impacts.push({ g: impactG, time: this.stepIndex * this.h });
+      this.impacts.push({ g: impactG, time: this.stepIndex * this.h, surface });
     return {
       time: this.stepIndex * this.h,
       step: this.stepIndex,
@@ -448,6 +476,8 @@ export class FlightSim {
       onGround,
       propStrike,
       impactG: onGround ? impactG : 0,
+      propWash: this.propWash?.maxSeverity ?? 0,
+      airspeed: len(sub(vel, this.wind?.velocity ?? v3())),
     };
   }
 
@@ -461,11 +491,23 @@ export class FlightSim {
     return this.state.onGround && this.fcTiltDeg < TURTLE.uprightDeg;
   }
 
-  /** Crash detection (off by default, as in Betaflight): an impact above the threshold. */
+  /** Crash detection (off by default, as in Betaflight): an impact above the threshold since the last check. */
   takeCrash(): boolean {
-    const hit = ARMING_FC.crashDetection.enabled && this.impacts.some((i) => i.g > ARMING_FC.crashDetection.impactG);
+    const since = this.crashCheckedTo;
+    this.crashCheckedTo = this.state.time;
+    // Nobody drains them in headless runs: keep the list short.
+    if (this.impacts.length > 64) this.impacts = this.impacts.slice(-32);
+    return (
+      ARMING_FC.crashDetection.enabled &&
+      this.impacts.some((i) => i.time > since && i.g > ARMING_FC.crashDetection.impactG)
+    );
+  }
+
+  /** Impacts since the last call (for sounds); keeps the list short. */
+  drainImpacts(): { g: number; surface: 'grass' | 'hard' }[] {
+    const out = this.impacts;
     this.impacts = [];
-    return hit;
+    return out;
   }
 
   /** Pose for rendering: interpolated between the last two fixed steps. */
@@ -495,6 +537,7 @@ export class FlightSim {
 
   /** Arming ramp (idle stagger) with this sim's seeded randomness. */
   arm(soft?: boolean): void {
+    this.home = toV3(this.body.translation());
     this.motors.arm(this.motorRng, soft);
     this.fc.reset(toQuat(this.body.rotation()), this.inputs.sticks);
   }

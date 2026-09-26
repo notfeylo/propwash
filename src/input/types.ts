@@ -18,7 +18,9 @@ export type InputAction =
   /** Acro → Angle → Horizon. */
   | 'modeCycle'
   /** Turtle mode switch (flip over after crash). */
-  | 'turtleToggle';
+  | 'turtleToggle'
+  /** Land mode: fly back to where it armed and land. */
+  | 'landToggle';
 
 export type InputDevice = 'keyboard' | 'gamepad' | 'radio';
 

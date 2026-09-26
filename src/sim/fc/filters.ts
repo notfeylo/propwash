@@ -107,3 +107,36 @@ export class Notch {
     this.x1 = this.x2 = this.y1 = this.y2 = v;
   }
 }
+
+/** Biquad band-pass (RBJ cookbook, 0 dB peak gain) for band-limited noise. */
+export class BandPass {
+  private b0: number;
+  private b2: number;
+  private a1: number;
+  private a2: number;
+  private x1 = 0;
+  private x2 = 0;
+  private y1 = 0;
+  private y2 = 0;
+
+  constructor(loHz: number, hiHz: number, dt: number) {
+    const f0 = Math.sqrt(loHz * hiHz);
+    const q = f0 / (hiHz - loHz);
+    const w = 2 * Math.PI * f0 * dt;
+    const alpha = Math.sin(w) / (2 * q);
+    const a0 = 1 + alpha;
+    this.b0 = alpha / a0;
+    this.b2 = -alpha / a0;
+    this.a1 = (-2 * Math.cos(w)) / a0;
+    this.a2 = (1 - alpha) / a0;
+  }
+
+  apply(x: number): number {
+    const y = this.b0 * x + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2;
+    this.x2 = this.x1;
+    this.x1 = x;
+    this.y2 = this.y1;
+    this.y1 = y;
+    return y;
+  }
+}
