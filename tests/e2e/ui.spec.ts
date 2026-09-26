@@ -61,6 +61,7 @@ test('motor test: safety gate, per-motor sliders, arming blocked', async ({ page
 });
 
 test('settings apply live and persist across reloads; keys can be rebound', async ({ page }) => {
+  test.setTimeout(150_000); // reloads the app once: two startups under CI's software renderer
   await page.keyboard.press('KeyO');
   const set = page.locator('.pw-set');
   await expect(set).toHaveClass(/pw-open/);
