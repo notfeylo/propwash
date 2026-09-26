@@ -101,6 +101,8 @@ export class GamepadInput {
       [B.modeCycle, 'modeCycle'],
       [B.turtleToggle, 'turtleToggle'],
       [B.landToggle, 'landToggle'],
+      [B.replay, 'replay'],
+      [B.hdStabCycle, 'hdStabCycle'],
     ];
     for (const [i, a] of taps) if (edge(i)) actions.push(a);
 

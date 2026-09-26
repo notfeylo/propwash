@@ -58,12 +58,14 @@ Rotor angles are integrated from RPM each frame (`angle += spinSign · rpm/60 ·
 
 ```
 OrbitControls ──▶ orbit camera ─┐
-mount_fpvCam ──▶ FPV camera ────┼──▶ CameraDirector ──▶ render camera ──▶ post pipeline
-mount_hdCam  ──▶ HD camera ─────┘    (active view,      (screen aspect, FOV framed so the
-                                     cut, feed, box)     video box spans the lens FOV)
+mount_fpvCam ──▶ FPV camera ────┤
+spring arm   ──▶ Chase camera ──┼──▶ CameraDirector ──▶ render camera ──▶ post pipeline
+pilot's eyes ──▶ LOS camera ────┤    (active view,      (screen aspect, FOV framed so the
+mount_hdCam  ──▶ HD camera ─────┘     cut, feed, box,    video box spans the lens FOV)
+                 (raw / smooth / horizon lock)
 ```
 
-FPV and HD cameras hang off the mounts on the vibrating body, so the feed shakes with the frame. `C` cycles Orbit → FPV → HD with a 150 ms dip through black; `V` switches the FPV feed between analog (4:3) and digital (16:9). The OSD (`src/ui/OSD.ts`) is a canvas over the video box on the feed's character grid (30×16 analog, 53×20 digital); the HD view shows only REC and a timer. The audio listener follows the render camera, with the close-mic mix in FPV/HD.
+FPV and HD cameras hang off the mounts on the vibrating body, so the feed shakes with the frame. Chase and LOS follow the drone (or the replay's) from `DirectorFrame.target`; Chase asks the sim for a ray (`FlightSim.castRay`) to stay clear of objects. HD stabilization rotates the render camera from the mount's known attitude. `C` cycles Orbit → FPV → Chase → LOS → HD with a 150 ms dip through black; `V` switches the FPV feed between analog (4:3) and digital (16:9). The OSD (`src/ui/OSD.ts`) is a canvas over the video box on the feed's character grid (30×16 analog, 53×20 digital); the HD view shows only REC and a timer. The audio listener follows the render camera, with the close-mic mix in FPV/HD.
 
 ## Input (`src/input`, PRD §4.7)
 
@@ -128,6 +130,20 @@ rate PID per axis: α = Kp·e + Ki·∫e (gyro-based relax, anti-windup) − Kd�
 ```
 
 Everything runs inside the 1 kHz physics step (`FlightSim.stepOnce`), so smoothing, filters and the PID see every sample. `FlightController.telemetry` holds each loop's setpoint, gyro (raw and filtered), P/I/D/F and motor commands for the blackbox (group 6). Gains are physical (the PID outputs angular acceleration); Settings shows them as Betaflight-style numbers through one linear factor per term.
+
+## Flight Lab: recording, replay, blackbox (`src/sim/recorder.ts`, `src/ui/FlightLabPanel.ts`, Phase 2 §8)
+
+```
+arm ──▶ FlightRecorder.begin: checkpoint = Rapier snapshot + capture(sim state)   (flight/checkpoint.ts)
+        FlightSim.log ◀── every outside change: inputs, arm, reset, airframe, FC config, battery, land
+        FlightSim.onStep ──▶ Blackbox (500 Hz, 50 ch) ──▶ Flight Lab graphs · CSV (blackbox_decode names)
+disarm + 3 s ──▶ recording done
+replay ──▶ ReplayRun: new FlightSim(same options) · restoreCheckpoint · applyOp(log) · stepOnce …
+           its own Blackbox ──▶ playback pose / RPM, compared bitwise with the recording
+import CSV ──▶ parseBlackboxCsv ──▶ flyImportedLog (setpoints → FC → sim at 1 kHz) ──▶ overlay + step responses
+```
+
+The Flight Lab panel (I) and uPlot load on first use. Step responses (`src/sim/stepResponse.ts`) are the PIDtoolbox deconvolution. Everything under `src/sim` stays pure TypeScript and runs headless in the tests.
 
 ## Powertrain (`src/sim`, PRD §4.4)
 

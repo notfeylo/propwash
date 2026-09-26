@@ -19,6 +19,9 @@ const ACTIONS: InputAction[] = [
   'modeCycle',
   'turtleToggle',
   'landToggle',
+  'flightLab',
+  'replay',
+  'hdStabCycle',
 ];
 
 /** Keys that steer; the page must not scroll on them. */

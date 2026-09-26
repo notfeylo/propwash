@@ -27,7 +27,8 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-deterministic-compat": "0.21.0",
-    "three": "0.186.1"
+    "three": "0.186.1",
+    "uplot": "^1.6.32"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

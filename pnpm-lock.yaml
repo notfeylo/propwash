@@ -14,6 +14,9 @@ importers:
       three:
         specifier: 0.186.1
         version: 0.186.1
+      uplot:
+        specifier: ^1.6.32
+        version: 1.6.32
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -1412,6 +1415,9 @@ packages:
 
   uniq@1.0.1:
     resolution: {integrity: sha512-Gw+zz50YNKPDKXs+9d+aKAjVwpjNwqzvNpLigIruT4HA9lMZNdMqs9x07kKHB/L9WRzqp4+DlTU5s4wG2esdoA==}
+
+  uplot@1.6.32:
+    resolution: {integrity: sha512-KIMVnG68zvu5XXUbC4LQEPnhwOxBuLyW1AHtpm6IKTXImkbLgkMy+jabjLgSLMasNuGGzQm/ep3tOkyTxpiQIw==}
 
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
@@ -2831,6 +2837,8 @@ snapshots:
   undici-types@8.9.0: {}
 
   uniq@1.0.1: {}
+
+  uplot@1.6.32: {}
 
   uri-js@4.4.1:
     dependencies:

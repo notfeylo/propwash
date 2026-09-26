@@ -57,6 +57,7 @@ export class Hud {
   readonly tools: HTMLDivElement;
   onMotors?: () => void;
   onSettings?: () => void;
+  onFlightLab?: () => void;
   private badge: HTMLSpanElement;
   private cam: HTMLSpanElement;
   private batt: HTMLDivElement;
@@ -88,12 +89,14 @@ export class Hud {
 
     this.tools = document.createElement('div');
     this.tools.className = 'pw-hud-tools';
-    this.tools.innerHTML = `<button type="button" class="pw-btn pw-panel" data-a="motors" title="Motor test (M)">MOTORS</button>
+    this.tools.innerHTML = `<button type="button" class="pw-btn pw-panel" data-a="lab" title="Flight Lab: blackbox, step response, CSV, replay (I)">FLIGHT LAB</button>
+      <button type="button" class="pw-btn pw-panel" data-a="motors" title="Motor test (M)">MOTORS</button>
       <button type="button" class="pw-btn pw-panel" data-a="settings" title="Settings (O)">SETTINGS</button>`;
     this.tools.addEventListener('click', (e) => {
       e.stopPropagation();
       const a = (e.target as HTMLElement).closest('button')?.dataset.a;
       if (a === 'motors') this.onMotors?.();
+      if (a === 'lab') this.onFlightLab?.();
       if (a === 'settings') this.onSettings?.();
     });
     parent.append(this.el, this.tools);

@@ -36,6 +36,9 @@ Keyboard, PS4 / PS5 controllers (Chrome's standard mapping) and USB RC radios al
 | Turtle mode (after crash)  | T, then arm while upside down    | D-pad up                               |
 | Land mode (fly home, land) | G                                | Cross (✕)                              |
 | Cycle camera / feed style  | C / V                            | Triangle / Square                      |
+| HD stabilization           | K (raw / smooth / horizon lock)  | D-pad right                            |
+| Replay the last flight     | Y (Space plays / pauses)         | D-pad left                             |
+| Flight Lab (blackbox)      | I                                | —                                      |
 | Beacon                     | B                                | Circle                                 |
 | Motor test panel           | M                                | Touchpad                               |
 | Payload toggle             | L                                | Share / Create                         |

@@ -3,6 +3,7 @@ import {
   Box3,
   PCFShadowMap,
   PerspectiveCamera,
+  Quaternion,
   Scene,
   Timer,
   Vector3,
@@ -21,7 +22,13 @@ import { FIELD_RENDER } from '../config/field';
 import { createField, type FieldView } from '../render/field';
 import { buildFieldLayout, type FieldLayout } from '../world/fieldLayout';
 import { Terrain } from '../world/terrain';
-import type { FlightSim } from '../sim/flight/FlightSim';
+import type { FlightSim, FlightSimOptions, Rapier } from '../sim/flight/FlightSim';
+import { isFeedView } from '../config/cameras';
+import { BLACKBOX, REPLAY } from '../config/blackbox';
+import { parseBlackboxCsv, toCsv } from '../sim/blackbox';
+import { FlightRecorder, flyImportedLog, ReplayRun } from '../sim/recorder';
+import type { FlightLabPanel, ImportResult } from '../ui/FlightLabPanel';
+import { ReplayBar } from '../ui/ReplayBar';
 import { QUALITY, RENDER, type QualityPreset } from '../config/render';
 import { DroneModel } from '../drone/DroneModel';
 import { createBench } from '../render/bench';
@@ -80,6 +87,17 @@ export class App {
   private lastDronePos = new Vector3();
   /** The orbit view follows the drone in flight (recordings turn it off for a fixed shot). */
   followDrone = true;
+  /** Flight recordings: checkpoint + op log + blackbox from each arm (Phase 2 §8.2). */
+  recorder: FlightRecorder | null = null;
+  /** A replay in progress: the resimulated flight, the playback time and speed. */
+  replay: { run: ReplayRun; t: number; playing: boolean; speed: number } | null = null;
+  readonly replayBar: ReplayBar;
+  flightLab: FlightLabPanel | null = null;
+  private flightOpts: FlightSimOptions | null = null;
+  private rapier: Rapier | null = null;
+  private video: { rec: MediaRecorder; chunks: Blob[] } | null = null;
+  private target = { position: new Vector3(), quaternion: new Quaternion(), velocity: new Vector3() };
+  private qb = new Quaternion();
   /** The flight test field (Phase 2 §5), built when flight is on. */
   field: { terrain: Terrain; layout: FieldLayout; view: FieldView } | null = null;
   private windV = new Vector3();
@@ -153,7 +171,7 @@ export class App {
     const look = new LookUniforms();
     this.cameras = new CameraDirector(this.camera, this.controls, look, (kind) => this.post.setView(kind));
     this.cameras.onChange = (mode) => {
-      document.body.classList.toggle('pw-feed-view', mode !== 'orbit');
+      document.body.classList.toggle('pw-feed-view', isFeedView(mode));
       if (mode === 'hd') this.recTimeS = 0;
     };
     this.post = new PostPipeline(renderer, this.scene, this.cameras.renderCamera, look);
@@ -170,6 +188,13 @@ export class App {
     this.hud = new Hud();
     this.motorPanel = new MotorTestPanel();
     this.settingsPanel = new SettingsPanel(this.settings, MODEL_CREDIT);
+    this.replayBar = new ReplayBar();
+    this.replayBar.onToggle = () => this.toggleReplayPlay();
+    this.replayBar.onSeek = (t) => this.seekReplay(t);
+    this.replayBar.onSpeed = (v) => this.replay && (this.replay.speed = v);
+    this.replayBar.onVideo = () => this.toggleVideo();
+    this.replayBar.onExit = () => this.stopReplay();
+    this.hud.onFlightLab = () => void this.toggleFlightLab();
     this.hud.onMotors = () => this.toggleMotorPanel();
     this.hud.onSettings = () => this.toggleSettings();
     this.settingsPanel.onCalibrate = () => this.calibrateRadio();
@@ -250,7 +275,8 @@ export class App {
       ]);
       await RAPIER.init();
       const base = AIRFRAMES[params.airframe ?? 'longrange7'];
-      const sim = new FlightSim({
+      this.rapier = RAPIER;
+      this.flightOpts = {
         rapier: RAPIER,
         airframe: withPayload(base, base.id === 'longrange7_payload' || this.drone.payload.visible),
         wind: params.wind ?? WIND.default,
@@ -258,7 +284,9 @@ export class App {
         field: this.field
           ? { terrain: this.field.terrain, layout: this.field.layout, padTopY: this.padTopY }
           : undefined,
-      });
+      };
+      const sim = new FlightSim(this.flightOpts);
+      this.recorder = new FlightRecorder(sim);
       if (sim.airframe.payload !== this.drone.payload.visible) this.drone.setPayloadVisible(sim.airframe.payload);
       this.powertrain.attachFlight(sim);
       this.flight = sim;
@@ -296,8 +324,11 @@ export class App {
     this.lastDronePos.copy(root.position);
     // The key light's tight shadow frustum travels with the drone.
     aimKeyLight(this.key, root.position);
-    // The antenna feels the real motion: specific force (minus 1 g vertical) and the air stream.
     const s = this.flight.state;
+    this.target.position.copy(root.position);
+    this.target.quaternion.copy(root.quaternion);
+    this.target.velocity.set(s.velocity.x, s.velocity.y, s.velocity.z);
+    // The antenna feels the real motion: specific force (minus 1 g vertical) and the air stream.
     const inv = root.quaternion.clone().invert();
     const w = this.flight.wind.velocity;
     this.tmpA.set(s.acceleration.x, s.acceleration.y, s.acceleration.z).applyQuaternion(inv);
@@ -313,6 +344,7 @@ export class App {
     this.cameras.setFeed(s.feed);
     this.cameras.setUptilt(s.uptiltDeg);
     this.cameras.jello = s.jello;
+    this.cameras.hdStabilization = s.hdStabilization;
     this.cameras.whipPan = s.whipPan;
     this.audio.setVolume(s.volume);
     this.input.throttleSource = s.throttleSource;
@@ -324,16 +356,17 @@ export class App {
   }
 
   /** Flight controller settings (mode, rates, PIDs, sensors) onto the live FC. */
-  private applyFcSettings(): void {
-    const fc = this.flight?.fc;
-    if (!fc) return;
+  applyFcSettings(): void {
+    if (!this.flight) return;
     const s = this.settings;
-    fc.mode = s.flightMode;
-    fc.idealSensors = s.idealSensors;
-    fc.ratesModel = s.ratesModel;
-    fc.rates = { roll: { ...s.ratesRP }, pitch: { ...s.ratesRP }, yaw: { ...s.ratesYaw } };
     const rp = fromBf(s.pidRP);
-    fc.gains = { roll: { ...rp }, pitch: { ...rp }, yaw: fromBf(s.pidYaw) };
+    this.flight.configureFc({
+      mode: s.flightMode,
+      idealSensors: s.idealSensors,
+      ratesModel: s.ratesModel,
+      rates: { roll: { ...s.ratesRP }, pitch: { ...s.ratesRP }, yaw: { ...s.ratesYaw } },
+      gains: { roll: { ...rp }, pitch: { ...rp }, yaw: fromBf(s.pidYaw) },
+    });
   }
 
   /** Q / L2: Acro → Angle → Horizon. */
@@ -413,8 +446,28 @@ export class App {
     const pt = this.powertrain;
     const controls = this.input.poll(dt);
     this.controlState = controls;
+    const replaying = this.replay !== null;
     for (const a of controls.actions) {
-      if (a === 'plugToggle') pt.togglePlug();
+      if (a === 'flightLab') void this.toggleFlightLab();
+      else if (a === 'replay') {
+        if (replaying) this.stopReplay();
+        else this.startReplay();
+      } else if (a === 'hdStabCycle') {
+        const m = this.cameras.cycleHdStabilization();
+        this.remember({ hdStabilization: m });
+        this.toast.show(
+          `HD stabilization: <b>${{ raw: 'Raw', smooth: 'Smooth', horizon: 'Horizon lock' }[m]}</b>`,
+          1400,
+        );
+      } else if (replaying) {
+        // In a replay the drone isn't yours: Space plays / pauses, the views still switch.
+        if (a === 'armToggle') this.toggleReplayPlay();
+        else if (a === 'cameraCycle') this.cameras.cycle();
+        else if (a === 'feedCycle') this.cycleFeed();
+        else if (a === 'hideUi') this.setUiHidden(!this.uiHidden);
+        else if (a === 'fullscreen') toggleFullscreen();
+        else if (a === 'settings') this.toggleSettings();
+      } else if (a === 'plugToggle') pt.togglePlug();
       else if ((a === 'armToggle' || a === 'arm') && !pt.power.armed && pt.motorTest.enabled)
         this.toast.show('Motor test is on: close it to arm', 2000);
       else if (a === 'armToggle') pt.toggleArm();
@@ -457,7 +510,9 @@ export class App {
     pt.sticks = this.sticksOverride ?? { roll: controls.roll, pitch: controls.pitch, yaw: controls.yaw };
     pt.motorTest.enabled = this.motorPanel.open && this.motorPanel.safety;
     for (let i = 0; i < 4; i++) pt.motorTest.values[i] = this.motorPanel.values[i];
-    this.lastEvents = pt.update(simDt);
+    // During a replay the live drone waits (disarmed) where it was.
+    this.lastEvents = pt.update(replaying ? 0 : simDt);
+    this.recorder?.update(replaying ? 0 : simDt, pt.power.armed);
     for (const e of this.lastEvents)
       if (e.type === 'armRefused') this.toast.show(armBlockedMessage(e.reason, controls.device));
     this.updateHaptics(controls);
@@ -465,12 +520,19 @@ export class App {
     if (pt.autolandDone) this.toast.show('Landed where it took off: <b>disarmed</b>', 2400);
     if (pt.autolandCancelled) this.toast.show('Land mode off: you have control', 2000);
 
-    this.placeDrone();
-    const rpms = this.rpmOverride ?? pt.rpms;
+    const rpms = this.replay ? this.replayFrame(dt) : (this.placeDrone(), this.rpmOverride ?? pt.rpms);
     this.drone.setRpm(rpms);
     this.drone.update(simDt, this.simFrozen ? PROP_BLEND.nominalFrameDtS : dt);
     this.updateLeds();
-    this.cameras.update(dt, { fpvSignal: pt.power.powered, vibration: this.drone.vibrationIntensity });
+    const f = this.flight;
+    this.cameras.update(dt, {
+      fpvSignal: pt.power.powered || this.replay !== null,
+      vibration: this.drone.vibrationIntensity,
+      target: f ? this.target : undefined,
+      castRay: f ? (o, d, max) => f.castRay(o, d, max) : undefined,
+      groundAt: f ? (x, z) => f.groundAt(x, z) : undefined,
+      padTopY: this.padTopY,
+    });
     if (this.field) {
       const w = this.flight?.wind.velocity;
       this.windV.set(w?.x ?? 0, w?.y ?? 0, w?.z ?? 0);
@@ -482,7 +544,8 @@ export class App {
     if (pt.power.armed) this.armedTimeS += simDt;
     this.recTimeS += dt;
     this.drawOsd();
-    this.inputViz.visible = !this.uiHidden && this.cameras.mode === 'orbit';
+    this.flightLab?.update(dt);
+    this.inputViz.visible = !this.uiHidden && !isFeedView(this.cameras.mode) && !this.replay;
     this.inputViz.update(controls, pt.power.armed, this.input.uncalibratedRadios.length > 0);
     this.updatePanels(dt, rpms, controls);
     if (!this.renderPaused) this.post.render();
@@ -574,23 +637,24 @@ export class App {
       else if (pt.battery.lowWarning) warning = 'LOW BATTERY';
       else if (p.beacon) warning = 'BEACON ON';
     }
+    const rb = this.replaySample();
     this.osd.draw(
       {
         mode: this.cameras.mode,
         feed: this.cameras.feed,
-        powered: p.powered,
-        armed: p.armed,
+        powered: p.powered || rb !== null,
+        armed: rb ? rb.driven : p.armed,
         flightMode: !this.flight
           ? 'ACRO'
           : pt.autoland
             ? 'LAND'
             : ({ acro: 'ACRO', angle: 'ANGL', horizon: 'HOR' } as const)[this.settings.flightMode],
-        voltage: pt.battery.voltage,
-        cellVoltage: pt.battery.cellVoltage,
-        usedMah: pt.battery.usedMah,
-        armedTimeS: this.armedTimeS,
-        throttle: pt.throttle,
-        warning,
+        voltage: rb ? rb.vbat : pt.battery.voltage,
+        cellVoltage: rb ? rb.vbat / (this.flight?.airframe.pack.series ?? 6) : pt.battery.cellVoltage,
+        usedMah: rb ? rb.mah : pt.battery.usedMah,
+        armedTimeS: rb ? rb.t : this.armedTimeS,
+        throttle: rb ? rb.throttle : pt.throttle,
+        warning: rb ? 'REPLAY' : warning,
         recTimeS: this.recTimeS,
         fade: this.cameras.fade,
         time: performance.now() / 1000,
@@ -636,8 +700,10 @@ export class App {
         forward: [fwd.x, fwd.y, fwd.z],
         up: [up.x, up.y, up.z],
       },
-      cameraMode: this.cameras.mode === 'orbit' ? 'orbit' : 'fpv',
-      distance: this.cameras.mode === 'orbit' ? cam.position.distanceTo(this.controls.target) : 0,
+      cameraMode: isFeedView(this.cameras.mode) ? 'fpv' : 'orbit',
+      distance: isFeedView(this.cameras.mode)
+        ? 0
+        : cam.position.distanceTo(this.cameras.mode === 'orbit' ? this.controls.target : this.target.position),
       ...this.flightAudio(dt, cam.position),
     };
   }
@@ -646,6 +712,7 @@ export class App {
   private flightAudio(dt: number, listener: Vector3): Partial<AudioFrame> {
     const f = this.flight;
     if (!f) return {};
+    if (this.replay) return this.replayAudio(dt, listener);
     const s = f.state;
     if (dt > 0) this.listenerVel.copy(listener).sub(this.lastListener).divideScalar(dt);
     this.lastListener.copy(listener);
@@ -664,9 +731,221 @@ export class App {
     return { airspeed: s.airspeed, propWash: s.propWash, doppler, impacts: f.drainImpacts(), propStrikes: strikes };
   }
 
+  /** I: open / close the Flight Lab (its code and uPlot load on first use). */
+  async toggleFlightLab(open = !this.flightLab?.open): Promise<void> {
+    if (!this.flightLab) {
+      const { FlightLabPanel } = await import('../ui/FlightLabPanel');
+      this.flightLab = new FlightLabPanel({
+        recording: () => this.recorder?.current ?? null,
+        recordingActive: () => this.recorder?.active !== null && this.recorder?.active !== undefined,
+        exportCsv: () => this.exportCsv(),
+        startReplay: () => this.startReplay(),
+        importLog: (file, drive) => this.importLog(file, drive),
+      });
+    }
+    if (open) {
+      this.settingsPanel.setOpen(false);
+      this.motorPanel.setOpen(false);
+    }
+    this.flightLab.setOpen(open);
+  }
+
+  /** Download the newest recording as a blackbox_decode-style CSV. */
+  exportCsv(): void {
+    const r = this.recorder?.current;
+    if (!r || r.blackbox.length === 0) return this.toast.show('Nothing recorded yet: arm and fly first', 2000);
+    const stamp = r.startedAt.toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    download(
+      new Blob([toCsv(r.blackbox)], { type: 'text/csv' }),
+      `propwash-${r.airframeId}-seed${r.seed}-${stamp}.csv`,
+    );
+  }
+
+  /** Fly a Betaflight blackbox CSV through the current airframe (Flight Lab import, §8.3). */
+  async importLog(file: File, drive: 'setpoint' | 'sticks'): Promise<ImportResult> {
+    if (!this.rapier || !this.flight) throw new Error('Flight physics is still loading.');
+    const log = parseBlackboxCsv(await file.text());
+    // Give the panel a frame to show "flying…" before the (synchronous) run.
+    await new Promise((r) => setTimeout(r, 30));
+    const { FlightSim } = await import('../sim/flight/FlightSim');
+    const sim = new FlightSim({ rapier: this.rapier, airframe: this.flight.airframe, wind: 'calm' });
+    sim.configureFc({
+      mode: 'acro',
+      idealSensors: this.flight.fc.idealSensors,
+      ratesModel: this.flight.fc.ratesModel,
+      rates: this.flight.fc.rates,
+      gains: this.flight.fc.gains,
+    });
+    try {
+      const out = flyImportedLog(sim, log, drive === 'setpoint' && log.setpoint ? 'setpoint' : 'sticks');
+      return { name: file.name, log, sim: out, airframe: sim.airframe.id, drive: log.setpoint ? drive : 'sticks' };
+    } finally {
+      sim.dispose();
+    }
+  }
+
+  /** Y: replay the last flight (resimulated from its checkpoint and inputs). */
+  startReplay(): void {
+    const rec = this.recorder;
+    if (!rec || !this.flightOpts || this.replay) return;
+    if (this.powertrain.power.armed) return this.toast.show('Land and disarm to watch the replay', 2000);
+    if (rec.active) rec.end();
+    const r = rec.last;
+    if (!r || r.blackbox.length < 10) return this.toast.show('No flight to replay yet: arm and fly first', 2000);
+    void import('../sim/flight/FlightSim').then(({ FlightSim }) => {
+      const run = new ReplayRun(new FlightSim(this.flightOpts!), r);
+      this.replay = { run, t: 0, playing: true, speed: 1 };
+      this.replayBar.show(true);
+      this.cameras.snapFollowers();
+      document.body.classList.add('pw-replay');
+      this.toast.show('<b>REPLAY</b>: resimulated from the seed and your inputs', 2000);
+    });
+  }
+
+  stopReplay(): void {
+    if (!this.replay) return;
+    if (this.video) this.toggleVideo();
+    this.replay.run.dispose();
+    this.replay = null;
+    this.replayBar.show(false);
+    this.cameras.snapFollowers();
+    document.body.classList.remove('pw-replay');
+  }
+
+  toggleReplayPlay(): void {
+    const r = this.replay;
+    if (!r) return;
+    if (r.t >= r.run.duration - 1e-3) r.t = 0;
+    r.playing = !r.playing;
+  }
+
+  seekReplay(t: number): void {
+    if (!this.replay) return;
+    this.replay.t = Math.max(0, Math.min(t, this.replay.run.duration));
+    this.cameras.snapFollowers();
+  }
+
+  /** The replay's recorded values at the playback time (OSD, audio), or null live. */
+  private replaySample(): {
+    t: number;
+    i: number;
+    a: number;
+    vbat: number;
+    mah: number;
+    throttle: number;
+    driven: boolean;
+  } | null {
+    const r = this.replay;
+    if (!r) return null;
+    const b = r.run.blackbox;
+    if (b.length < 2) return null;
+    const f = Math.min(r.t * b.rateHz, b.length - 1.001);
+    const i = Math.floor(f);
+    return {
+      t: r.t,
+      i,
+      a: f - i,
+      vbat: b.at(i, 'vbat'),
+      mah: b.at(i, 'mah'),
+      throttle: b.at(i, 'rc.throttle'),
+      driven: [0, 1, 2, 3].some((m) => b.at(i, `motor.${m}` as 'motor.0') > 0),
+    };
+  }
+
+  /** A replay frame: resimulate ahead, advance playback, pose the drone; returns the RPMs. */
+  private replayFrame(dt: number): number[] {
+    const r = this.replay!;
+    r.run.run(REPLAY.budgetMs);
+    r.run.verify();
+    const dur = r.run.duration;
+    // Playback never runs past what has been resimulated.
+    if (r.playing) r.t = Math.min(r.t + dt * r.speed, dur, r.run.ready);
+    if (r.t >= dur - 1e-3 && r.playing) {
+      r.playing = false;
+      if (this.video) this.toggleVideo();
+    }
+    const mm = r.run.mismatch;
+    this.replayBar.update(r.t, r.run.ready, dur, r.playing, mm < 0 ? -1 : mm / BLACKBOX.rateHz, this.video !== null);
+    const s = this.replaySample();
+    const root = this.drone.root;
+    if (!s) return [0, 0, 0, 0];
+    const b = r.run.blackbox;
+    const lerp = (ch: Parameters<typeof b.at>[1]) => b.at(s.i, ch) + (b.at(s.i + 1, ch) - b.at(s.i, ch)) * s.a;
+    root.position.set(lerp('pos.x'), lerp('pos.y'), lerp('pos.z'));
+    this.qb.set(b.at(s.i, 'quat.x'), b.at(s.i, 'quat.y'), b.at(s.i, 'quat.z'), b.at(s.i, 'quat.w'));
+    root.quaternion
+      .set(b.at(s.i + 1, 'quat.x'), b.at(s.i + 1, 'quat.y'), b.at(s.i + 1, 'quat.z'), b.at(s.i + 1, 'quat.w'))
+      .normalize();
+    root.quaternion.slerpQuaternions(this.qb.normalize(), root.quaternion.clone(), s.a);
+    if (this.followDrone) {
+      const d = this.v.copy(root.position).sub(this.lastDronePos);
+      this.camera.position.add(d);
+      this.controls.target.add(d);
+    }
+    this.lastDronePos.copy(root.position);
+    aimKeyLight(this.key, root.position);
+    this.target.position.copy(root.position);
+    this.target.quaternion.copy(root.quaternion);
+    this.target.velocity.set(lerp('vel.x'), lerp('vel.y'), lerp('vel.z'));
+    return [0, 1, 2, 3].map((m) => lerp(`rpm.${m}` as 'rpm.0'));
+  }
+
+  /** Replay audio coupling: Doppler and air rush from the recorded motion. */
+  private replayAudio(dt: number, listener: Vector3): Partial<AudioFrame> {
+    if (dt > 0) this.listenerVel.copy(listener).sub(this.lastListener).divideScalar(dt);
+    this.lastListener.copy(listener);
+    const t = this.target;
+    const toDrone = this.tmpA.copy(t.position).sub(listener);
+    const d = toDrone.length() || 1;
+    const away = this.tmpB.copy(t.velocity).sub(this.listenerVel).dot(toDrone) / d;
+    const D = AUDIO.doppler;
+    const doppler = Math.min(1 + D.maxShift, Math.max(1 - D.maxShift, D.speedOfSoundMs / (D.speedOfSoundMs + away)));
+    return { airspeed: t.velocity.length(), propWash: 0, doppler, impacts: [], propStrikes: [] };
+  }
+
+  /** Record the canvas as a WebM while the replay plays (the OSD overlay isn't in it). */
+  toggleVideo(): void {
+    if (this.video) {
+      this.video.rec.stop();
+      return;
+    }
+    const canvas = this.renderer.domElement;
+    if (!('captureStream' in canvas) || typeof MediaRecorder === 'undefined')
+      return this.toast.show('This browser cannot record the canvas', 2000);
+    const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) =>
+      MediaRecorder.isTypeSupported(m),
+    );
+    const rec = new MediaRecorder(
+      canvas.captureStream(60),
+      mime ? { mimeType: mime, videoBitsPerSecond: 12e6 } : undefined,
+    );
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = () => {
+      this.video = null;
+      download(new Blob(chunks, { type: 'video/webm' }), `propwash-replay-${this.cameras.mode}.webm`);
+    };
+    this.video = { rec, chunks };
+    rec.start(250);
+    if (this.replay) {
+      if (this.replay.t >= this.replay.run.duration - 1e-3) this.replay.t = 0;
+      this.replay.playing = true;
+    }
+  }
+
   get backend(): 'webgpu' | 'webgl2' {
     return (this.renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'webgpu' : 'webgl2';
   }
+}
+
+function download(blob: Blob, name: string): void {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
 function toggleFullscreen(): void {

@@ -20,7 +20,13 @@ export type InputAction =
   /** Turtle mode switch (flip over after crash). */
   | 'turtleToggle'
   /** Land mode: fly back to where it armed and land. */
-  | 'landToggle';
+  | 'landToggle'
+  /** Flight Lab panel: blackbox graphs, step response, CSV export, log import. */
+  | 'flightLab'
+  /** Replay the last flight (and leave the replay). */
+  | 'replay'
+  /** HD camera stabilization: raw → smooth → horizon lock. */
+  | 'hdStabCycle';
 
 export type InputDevice = 'keyboard' | 'gamepad' | 'radio';
 

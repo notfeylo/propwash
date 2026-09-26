@@ -1,5 +1,6 @@
 import type { App } from './App';
-import type { CameraMode, FeedStyle } from '../config/cameras';
+import type { CameraMode, FeedStyle, HdStabilization } from '../config/cameras';
+import { toCsv } from '../sim/blackbox';
 import type { ControlState } from '../input/types';
 import type { BackgroundMode, QualityPreset } from '../config/render';
 import type { FcLedMode, VtxLedMode } from '../drone/LEDs';
@@ -56,6 +57,9 @@ export interface CameraInfo {
   aspect: number;
   /** OSD text currently drawn (one element per entry). */
   osd: string[];
+  hdStabilization: HdStabilization;
+  /** Render camera roll against the horizon (deg): 0 = level (HD horizon lock). */
+  rollDeg: number;
 }
 
 export interface DebugHandle {
@@ -135,6 +139,19 @@ export interface DebugHandle {
   setTurtle(on: boolean): void;
   /** Land mode (armed): returns whether it is on. */
   toggleLand(): boolean;
+  setHdStabilization(m: HdStabilization): void;
+  /** Where the drone model is drawn (the live drone, or the replay's). */
+  dronePosition(): Vec3;
+  /** Flight recording (Phase 2 §8.2): the one in progress, else the last. */
+  recording(): { active: boolean; seconds: number; samples: number; ops: number; seed: number } | null;
+  /** The recording as blackbox_decode-style CSV text. */
+  blackboxCsv(): string | null;
+  startReplay(): void;
+  stopReplay(): void;
+  seekReplay(t: number): void;
+  /** Replay state; `mismatch` −1 while bit-identical to the recording. */
+  replay(): { t: number; duration: number; ready: number; playing: boolean; mismatch: number } | null;
+  openFlightLab(open: boolean): Promise<void>;
   /** Last flight-controller loop: setpoint and gyro (deg/s), PID terms, motor commands. */
   fc(): unknown;
   settings(): unknown;
@@ -297,8 +314,34 @@ export function exposeDebug(app: App): void {
     setSticks: (s) => (app.sticksOverride = s ? { ...s } : null),
     setFlightMode(mode) {
       app.settings.flightMode = mode;
-      if (app.flight) app.flight.fc.mode = mode;
+      app.applyFcSettings();
     },
+    setHdStabilization: (m) => (app.cameras.hdStabilization = m),
+    dronePosition: () => {
+      const p = app.drone.root.position;
+      return [p.x, p.y, p.z];
+    },
+    recording() {
+      const r = app.recorder?.current;
+      if (!r) return null;
+      return {
+        active: app.recorder?.active === r,
+        seconds: r.blackbox.duration,
+        samples: r.blackbox.length,
+        ops: r.ops.length,
+        seed: r.seed,
+      };
+    },
+    blackboxCsv: () => (app.recorder?.current ? toCsv(app.recorder.current.blackbox) : null),
+    startReplay: () => app.startReplay(),
+    stopReplay: () => app.stopReplay(),
+    seekReplay: (t) => app.seekReplay(t),
+    replay() {
+      const r = app.replay;
+      if (!r) return null;
+      return { t: r.t, duration: r.run.duration, ready: r.run.ready, playing: r.playing, mismatch: r.run.mismatch };
+    },
+    openFlightLab: (open) => app.toggleFlightLab(open),
     fc: () => (app.flight ? JSON.parse(JSON.stringify(app.flight.fc.telemetry)) : null),
     placeDrone(x, z, altitude = 0, rollDeg = 0) {
       const f = app.flight;
@@ -333,6 +376,12 @@ export function exposeDebug(app: App): void {
         fovDeg: r.fov,
         aspect: r.aspect,
         osd: [...app.osd.lines],
+        hdStabilization: c.hdStabilization,
+        rollDeg: (() => {
+          // Angle between the camera's right vector and the horizontal plane.
+          const right = r.position.clone().set(1, 0, 0).applyQuaternion(r.quaternion);
+          return (Math.asin(Math.max(-1, Math.min(1, right.y))) * 180) / Math.PI;
+        })(),
       };
     },
     project(world) {
